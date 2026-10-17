@@ -44,13 +44,20 @@ chmod +x "$launcher/Contents/MacOS/TabletDisplayLauncher"
 codesign --force --sign - "$launcher" >/dev/null 2>&1 || true
 
 dest="$HOME/Desktop/Tablet Display 启动器.app"
-if [[ -L "$dest" ]]; then rm -f "$dest"; fi
-if [[ -e "$dest" ]]; then
-  print -u2 "$dest 已存在，未覆盖。"
-  exit 1
+# The launcher is a generated artifact; replace an older copy so its script,
+# icon and signing identity stay in sync with the current build.
+if [[ -e "$dest" || -L "$dest" ]]; then
+  rm -rf "$dest"
 fi
 ditto "$launcher" "$dest"
 xattr -dr com.apple.quarantine "$dest" 2>/dev/null || true
 touch "$dest"
-print "已生成桌面启动器：$dest"
+
+if [[ ! -x "$dest/Contents/MacOS/TabletDisplayLauncher" ]]; then
+  print -u2 "启动器生成失败：$dest"
+  exit 1
+fi
+/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$dest/Contents/Info.plist" >/dev/null
+codesign --verify --deep --strict "$dest"
+print "已更新桌面启动器：$dest"
 print "可以把它拖到 Dock；双击即可启动副屏。"

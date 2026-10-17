@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS build and core tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+      - name: Build macOS app
+        run: |
+          mkdir -p .build/ModuleCache
+          CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache" \
+            swift build --disable-sandbox -c release \
+            -Xswiftc -module-cache-path -Xswiftc "$PWD/.build/ModuleCache"
+      - name: Core, protocol and socket tests
+        run: make test-core
+
+  android:
+    name: Android build and protocol tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install zsh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-34" "build-tools;36.0.0"
+      - name: Android protocol tests
+        run: |
+          chmod +x scripts/*.sh
+          make test-android
+      - name: Build APK
+        run: ./scripts/build-android.sh

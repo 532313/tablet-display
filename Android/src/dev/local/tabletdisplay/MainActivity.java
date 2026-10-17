@@ -26,7 +26,6 @@ import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
@@ -46,6 +45,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private volatile Socket videoSocket;
     private InputSender inputSender;
     private long lastMoveNs;
+    private boolean pointerDown;
+    private float lastPointerX = 0.5f;
+    private float lastPointerY = 0.5f;
+    private float mappedX;
+    private float mappedY;
     private volatile boolean videoVisible;
     private volatile int videoWidth;
     private volatile int videoHeight;
@@ -121,10 +125,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     // The video is letterboxed by MediaCodec's SCALE_TO_FIT mode when its
     // aspect ratio differs from the SurfaceView. Map touches into the area
     // that actually shows video instead of the whole screen.
-    private void sendPointer(View view, float x, float y, byte phase) {
+    private boolean mapToVideo(View view, float x, float y) {
         int viewWidth = view.getWidth();
         int viewHeight = view.getHeight();
-        if (viewWidth <= 0 || viewHeight <= 0) return;
+        if (viewWidth <= 0 || viewHeight <= 0) return false;
         int width = videoWidth;
         int height = videoHeight;
         if (width > 0 && height > 0) {
@@ -139,8 +143,37 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             x /= viewWidth;
             y /= viewHeight;
         }
-        if (x < 0f || x > 1f || y < 0f || y > 1f) return;
-        inputSender.send(phase, x, y);
+        if (x < 0f || x > 1f || y < 0f || y > 1f) return false;
+        mappedX = x;
+        mappedY = y;
+        return true;
+    }
+
+    private void sendPointer(View view, float x, float y, byte phase) {
+        if (phase == 1) {
+            // Never start a gesture from a black bar. A down that was not
+            // accepted must not produce a matching up later.
+            if (!mapToVideo(view, x, y)) return;
+            pointerDown = true;
+            lastPointerX = mappedX;
+            lastPointerY = mappedY;
+            inputSender.send((byte) 1, lastPointerX, lastPointerY);
+            return;
+        }
+        if (!pointerDown) return;
+        if (phase == 2) {
+            // Dragging inside the black bar keeps the cursor at the last
+            // valid position; it must not move outside the video area.
+            if (!mapToVideo(view, x, y)) return;
+            lastPointerX = mappedX;
+            lastPointerY = mappedY;
+            inputSender.send((byte) 2, lastPointerX, lastPointerY);
+            return;
+        }
+        // ACTION_UP / ACTION_CANCEL: always send up, even if the finger left
+        // the video rectangle. Otherwise the Mac can stay in mouse-down state.
+        pointerDown = false;
+        inputSender.send((byte) 3, lastPointerX, lastPointerY);
     }
 
     private void hideSystemUi() {
@@ -157,6 +190,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     @Override public void surfaceCreated(SurfaceHolder holder) {
         running = true;
+        pointerDown = false;
         if (choreographer == null) choreographer = Choreographer.getInstance();
         if (!vsyncScheduled) {
             choreographer.postFrameCallback(vsyncCallback);
@@ -184,6 +218,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     @Override public void surfaceDestroyed(SurfaceHolder holder) {
         running = false;
+        if (pointerDown && inputSender != null) {
+            pointerDown = false;
+            inputSender.send((byte) 3, lastPointerX, lastPointerY);
+        }
         if (choreographer != null && vsyncScheduled) {
             choreographer.removeFrameCallback(vsyncCallback);
             vsyncScheduled = false;
@@ -199,6 +237,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private void receiveVideo(SurfaceHolder holder) {
+        int reconnectAttempts = 0;
         while (running) {
             MediaCodec codec = null;
             DecoderOutput output = null;
@@ -216,11 +255,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 request.writeBytes(requestHead.toString());
                 request.flush();
                 DataInputStream input = new DataInputStream(new BufferedInputStream(socket.getInputStream(), 128 * 1024));
-                readHttpHeader(input);
+                VideoProtocol.readHttpHeader(input);
                 int width = input.readInt();
                 int height = input.readInt();
                 int fps = input.readInt();
-                if (width < 640 || width > 4096 || height < 480 || height > 4096) throw new IOException("Invalid video size");
+                VideoProtocol.validateVideoSize(width, height);
                 if (fps < 1 || fps > 120) fps = 60;
                 videoWidth = width;
                 videoHeight = height;
@@ -228,31 +267,31 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 runOnUiThread(() -> { if (screen != null) applySurfaceFrameRate(screen.getHolder()); });
                 Log.i(TAG, "Video " + width + "x" + height + " @" + fps + "fps");
                 resetStats();
+                reconnectAttempts = 0;
                 while (running) {
-                    boolean keyframe = input.readUnsignedByte() == 1;
-                    int length = input.readInt();
-                    if (length <= 0 || length > 4 * 1024 * 1024) throw new IOException("Invalid frame length " + length);
-                    byte[] frame = new byte[length];
-                    input.readFully(frame);
+                    VideoProtocol.Frame frame = VideoProtocol.readFrame(input);
                     synchronized (statsLock) {
                         statsReceived++;
-                        statsBytes += length;
+                        statsBytes += frame.data.length;
                         statsMaxBufferedBytes = Math.max(statsMaxBufferedBytes, input.available());
                     }
                     if (codec == null) {
-                        if (!keyframe) continue;
-                        codec = configureDecoder(width, height, fps, frame, holder);
+                        if (!frame.keyframe) continue;
+                        codec = configureDecoder(width, height, fps, frame.data, holder);
                         output = new DecoderOutput(codec, socket);
                         output.start();
                     }
-                    queueFrame(codec, output, frame);
+                    queueFrame(codec, output, frame.data);
                     reportStatsIfDue();
                 }
             } catch (Exception error) {
                 Log.e(TAG, "Video connection", error);
                 videoVisible = false;
-                showStatus("连接中断，正在重试…");
-                try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+                if (ReconnectPolicy.shouldRetry(running)) {
+                    showStatus("连接中断，正在重试…");
+                    long delay = ReconnectPolicy.delayMillis(reconnectAttempts++);
+                    try { Thread.sleep(delay); } catch (InterruptedException ignored) {}
+                }
             } finally {
                 videoSocket = null;
                 if (output != null) {
@@ -267,25 +306,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }
     }
 
-    private static void readHttpHeader(InputStream stream) throws IOException {
-        int count = 0, matched = 0;
-        byte[] end = {'\r', '\n', '\r', '\n'};
-        StringBuilder first = new StringBuilder();
-        while (count++ < 8192) {
-            int value = stream.read();
-            if (value < 0) throw new IOException("Connection closed");
-            if (first.length() < 15) first.append((char) value);
-            matched = value == end[matched] ? matched + 1 : (value == '\r' ? 1 : 0);
-            if (matched == 4) {
-                if (!first.toString().startsWith("HTTP/1.1 200")) throw new IOException("HTTP error: " + first);
-                return;
-            }
-        }
-        throw new IOException("HTTP header too large");
-    }
-
     private static MediaCodec configureDecoder(int width, int height, int fps, byte[] firstFrame, SurfaceHolder holder) throws IOException {
-        ArrayList<byte[]> nals = splitNals(firstFrame);
+        ArrayList<byte[]> nals = VideoProtocol.splitNals(firstFrame);
         byte[] sps = null, pps = null;
         for (byte[] nal : nals) {
             if (nal.length < 5) continue;
@@ -326,20 +348,6 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             }
         }
         return MediaCodec.createDecoderByType("video/avc");
-    }
-
-    private static ArrayList<byte[]> splitNals(byte[] bytes) {
-        ArrayList<byte[]> result = new ArrayList<>();
-        int start = -1;
-        for (int i = 0; i + 3 < bytes.length; i++) {
-            if (bytes[i] == 0 && bytes[i + 1] == 0 && bytes[i + 2] == 0 && bytes[i + 3] == 1) {
-                if (start >= 0 && i > start) result.add(java.util.Arrays.copyOfRange(bytes, start, i));
-                start = i;
-                i += 3;
-            }
-        }
-        if (start >= 0) result.add(java.util.Arrays.copyOfRange(bytes, start, bytes.length));
-        return result;
     }
 
     private void queueFrame(MediaCodec codec, DecoderOutput output, byte[] frame) throws IOException {
@@ -470,7 +478,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                     requestHead.append("\r\n");
                     output.writeBytes(requestHead.toString());
                     output.flush();
-                    readHttpHeader(socket.getInputStream());
+                    VideoProtocol.readHttpHeader(socket.getInputStream());
                     while (active) {
                         Pointer pointer = queue.take();
                         output.writeByte(pointer.phase);

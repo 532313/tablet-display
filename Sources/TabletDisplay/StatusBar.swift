@@ -1,12 +1,13 @@
 import AppKit
 
 /// Minimal menu-bar presence so the app does not look like an invisible
-/// process. It intentionally exposes only the health page and Quit.
+/// process. It exposes health, permission shortcuts, the log and Quit.
 final class StatusBarController: NSObject, @unchecked Sendable {
     private let item: NSStatusItem
     private let statusItem: NSMenuItem
     private var port: UInt16
 
+    @MainActor
     init(port: UInt16 = 9137) {
         self.port = port
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -22,6 +23,22 @@ final class StatusBarController: NSObject, @unchecked Sendable {
         let open = NSMenuItem(title: "打开状态页", action: #selector(openHealth), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
+
+        let permissions = NSMenuItem(title: "权限设置", action: nil, keyEquivalent: "")
+        let permissionMenu = NSMenu()
+        for pane in [PermissionPane.screenRecording, .accessibility, .localNetwork] {
+            let entry = NSMenuItem(title: pane.title, action: #selector(openPermission(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.tag = pane.rawValue
+            permissionMenu.addItem(entry)
+        }
+        permissions.submenu = permissionMenu
+        menu.addItem(permissions)
+
+        let log = NSMenuItem(title: "打开日志", action: #selector(openLog), keyEquivalent: "")
+        log.target = self
+        menu.addItem(log)
+
         let quit = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -39,14 +56,16 @@ final class StatusBarController: NSObject, @unchecked Sendable {
     }
 
     func showError(_ message: String) {
-        let present = {
-            let alert = NSAlert()
-            alert.messageText = "无法启动 Tablet Display"
-            alert.informativeText = message
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "好")
-            NSApp.activate(ignoringOtherApps: true)
-            alert.runModal()
+        let present: () -> Void = {
+            MainActor.assumeIsolated {
+                let alert = NSAlert()
+                alert.messageText = "无法启动 Tablet Display"
+                alert.informativeText = message
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "好")
+                NSApp.activate(ignoringOtherApps: true)
+                _ = alert.runModal()
+            }
         }
         if Thread.isMainThread {
             present()
@@ -56,12 +75,29 @@ final class StatusBarController: NSObject, @unchecked Sendable {
     }
 
     func update(_ text: String) {
-        if Thread.isMainThread {
-            statusItem.title = text
-        } else {
-            DispatchQueue.main.async { [weak self] in
-                self?.statusItem.title = text
+        let apply: @Sendable () -> Void = { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.statusItem.title = text
             }
+        }
+        if Thread.isMainThread {
+            apply()
+        } else {
+            DispatchQueue.main.async(execute: apply)
+        }
+    }
+
+    func showPermissionPrompt(_ pane: PermissionPane, message: String) {
+        let present = {
+            MainActor.assumeIsolated {
+                PermissionGuide.showMissing(pane, message: message)
+            }
+        }
+        if Thread.isMainThread {
+            present()
+        } else {
+            DispatchQueue.main.sync(execute: present)
         }
     }
 
@@ -70,7 +106,16 @@ final class StatusBarController: NSObject, @unchecked Sendable {
         NSWorkspace.shared.open(url)
     }
 
+    @objc private func openPermission(_ sender: NSMenuItem) {
+        guard let pane = PermissionPane(rawValue: sender.tag) else { return }
+        MainActor.assumeIsolated { PermissionGuide.open(pane) }
+    }
+
+    @objc private func openLog() {
+        NSWorkspace.shared.activateFileViewerSelecting([AppLog.fileURL])
+    }
+
     @objc private func quit() {
-        NSApp.terminate(nil)
+        MainActor.assumeIsolated { NSApp.terminate(nil) }
     }
 }

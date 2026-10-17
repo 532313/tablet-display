@@ -28,6 +28,7 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 - Android SDK：API 34、Build Tools 36.0.0、Platform Tools。
 - JDK：默认使用 Android Studio 的 JBR；如果不是默认安装位置，请设置 `JAVA_HOME`。
 - Android 调试签名 key 默认保存在 `~/Library/Application Support/TabletDisplay/debug.keystore`（不在仓库里），避免清理构建目录时丢失签名身份；可用 `TABLETDISPLAY_DEBUG_KEYSTORE` 覆盖。
+- 可选：`openssl`（`scripts/create-signing-identity.sh` 用于生成本地稳定签名身份；macOS 自带 LibreSSL 通常可用）。
 - 平板开启 USB 调试；无线模式要求 Mac 与平板在同一局域网。
 - 首次运行需要授予“屏幕录制”“辅助功能”“本地网络”。
 
@@ -40,16 +41,34 @@ make app        # 构建 Mac 应用和 Android APK
 make dmg        # 生成 dist/Tablet Display-0.2.0.dmg
 ```
 
-DMG 里把 **Tablet Display.app** 拖到“应用程序”。当前构建使用 ad-hoc 签名，未公证；首次打开可能需要右键“打开”。仓库不提交 DMG/APK，构建后才会生成。
+DMG 里把 **Tablet Display.app** 拖到“应用程序”。构建默认使用 ad-hoc 或本地自签名，未使用 Developer ID 公证；首次打开可能需要右键“打开”。仓库不提交 DMG/APK，构建后才会生成。
 
 也可以直接安装到当前用户目录：
 
 ```sh
-make install         # 安装 Mac App 到 ~/Applications，并生成桌面启动器
+make install         # 覆盖安装到 ~/Applications，并更新桌面启动器
 make install-tablet  # 只把平板接收端 APK 装到已连接平板
 ```
 
 Mac App 启动时会自动把内置的 APK 安装/更新到平板；`make install-tablet` 适合只想单独更新平板端、不想动 Mac App 和 TCC 权限的场景。
+
+`make install` 会直接覆盖 `~/Applications/Tablet Display.app` 和 `~/Desktop/Tablet Display 启动器.app`，并校验两者的签名；如果启动器生成失败，安装会报错而不是静默跳过。
+
+### 稳定签名（推荐）
+
+macOS 的 ad-hoc 签名会随构建内容变化，系统会把它当成新应用，导致屏幕录制/辅助功能授权反复失效。创建一次本地自签名身份即可复用：
+
+```sh
+make signing     # 创建 “Tablet Display Local” 本地代码签名身份
+make app         # 构建时自动检测并使用它
+```
+
+脚本会在 `~/Library/Application Support/TabletDisplay/signing` 保存证书材料，并导入当前钥匙串。首次 `codesign` 可能询问钥匙串访问，选择“始终允许”；如果系统提示信任证书，请允许。
+
+- 也可以指定已有的稳定身份：`TABLETDISPLAY_SIGN_IDENTITY='Developer ID Application: ...' make app`。
+- 强制回到 ad-hoc：`TABLETDISPLAY_SIGN_IDENTITY=- make app`。
+- 从 ad-hoc 切换到稳定签名后，建议在“屏幕录制/辅助功能”列表里删除旧条目，再把 `~/Applications/Tablet Display.app` 重新添加一次；之后重建通常不再需要重新授权。
+- 已验证：使用同一 `Tablet Display Local` 身份执行 `make app` + `make install` 覆盖安装后，屏幕录制/辅助功能授权仍然保留。
 
 ## 使用
 
@@ -67,7 +86,7 @@ make wireless
 ### 日常
 
 - 双击 `~/Desktop/Tablet Display 启动器.app`，或从 `~/Applications` 打开 **Tablet Display**。
-- 菜单栏出现 **Tablet Display** 图标，可打开状态页或退出。
+- 菜单栏出现 **Tablet Display** 图标，可打开状态页、权限设置、日志或退出。
 - 终端启动：`./scripts/run-wireless.sh`；USB/ADB 隧道：`./scripts/run-wireless.sh --adb-tunnel`。
 
 ### 停止
@@ -83,11 +102,12 @@ make wireless
 
 ## 权限（重要）
 
-macOS 的 ad-hoc 签名在每次重新构建后会变化，TCC 可能要求重新授权。
+建议先执行 `make signing` 创建稳定签名，让 TCC 绑定到稳定的代码身份；否则 ad-hoc 签名在每次重建后都可能变化，系统会要求重新授权。
 
 - **屏幕录制**：主“屏幕与系统音频录制”列表里添加并勾选 `~/Applications/Tablet Display.app`（核心应用）。
 - **辅助功能**：同样添加核心应用；如果开关是开的但仍每次弹窗，删除旧条目再重新添加。
 - **本地网络**：首次连接时允许。
+- 菜单栏 → **权限设置** 可直接打开“屏幕录制/辅助功能/本地网络”对应页面；缺少权限时应用也会弹出带“打开系统设置”按钮的提示。
 - 不要把桌面上的 **Tablet Display 启动器** 加进这两个列表——它只负责启动核心应用，不参与采集。
 
 ## 参数
@@ -121,7 +141,10 @@ macOS 的 ad-hoc 签名在每次重新构建后会变化，TCC 可能要求重�
 make app            # 构建 Mac app + APK
 make apk            # 只构建平板接收端 APK
 make install-tablet # 把 APK 直接装到已连接的平板
-make test           # 核心测试
+make test           # 核心 + Android 协议 + socket 集成测试
+make test-core      # 只跑 macOS 核心/协议集成测试
+make test-android   # 只跑 Android 纯 Java 协议测试
+make signing        # 创建稳定本地代码签名身份
 make run            # 本机运行构建产物
 make icon           # 从 Resources/AppIcon-1024.png 重新生成 icns
 make clean          # 删除编译缓存和构建产物
@@ -135,10 +158,12 @@ make clean          # 删除编译缓存和构建产物
 │   ├── TabletDisplay/
 │   └── VirtualDisplayBridge/
 ├── Android/            # 平板接收端
-├── Tests/              # 核心测试
+│   └── test/           # 纯 Java 协议测试
+├── Tests/              # macOS 核心/协议集成测试
 ├── Resources/          # Info.plist、图标
-├── scripts/            # 构建、运行、打包、安装
+├── scripts/            # 构建、运行、测试、打包、安装、签名
 ├── docs/               # 架构、协议、开发记录
+├── .github/workflows/  # CI
 ├── build/              # 开发构建产物（忽略）
 └── dist/               # 发布 DMG（忽略）
 ```
@@ -149,6 +174,15 @@ make clean          # 删除编译缓存和构建产物
 - [传输协议](docs/PROTOCOL.md)
 - [开发记录与排障](docs/DEVELOPMENT_NOTES.md)
 - [第三方声明](THIRD_PARTY.md)
+
+## 测试与 CI
+
+`make test` 会依次运行两组测试，不需要连接平板：
+
+- `make test-core`：编译 macOS 核心代码，覆盖尺寸解析、帧队列、采集代次、路由选卡、严格参数校验，并通过本机 socket 验证 `/video` 帧格式与鉴权、`/input` 解析、断连自动释放鼠标、长连接超时隔离、重连和请求超时。
+- `make test-android`：纯 Java 测试 `VideoProtocol` 的 HTTP 头/帧/NAL 解析，以及 `ReconnectPolicy` 的退避策略。
+
+CI 定义在 [.github/workflows/ci.yml](.github/workflows/ci.yml)：macOS job 构建 Swift 应用并跑 `make test-core`；Ubuntu job 安装 Android SDK 后跑 `make test-android` 并构建 APK。CI 不启动模拟器，MediaCodec 实际解码和触摸注入仍需在真机上验证。
 
 ## 发布
 

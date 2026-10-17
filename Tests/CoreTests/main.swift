@@ -40,6 +40,38 @@ let secondCapture = captureGeneration.start()
 check(captureGeneration.isCurrent(secondCapture) && !captureGeneration.isCurrent(firstCapture),
       "重新启动只应接受最新采集代次")
 
+let parsed = try! Options.parse([
+    "--width", "1920", "--height", "1200", "--fps", "60", "--bitrate", "20",
+    "--port", "9137", "--serial", "192.168.1.2:5555", "--direct-host", "192.168.1.10",
+    "--token", "abc", "--duration", "1.5", "--no-hidpi"
+])
+check(parsed.width == 1920 && parsed.height == 1200, "合法分辨率应被接受")
+check(parsed.port == 9137 && parsed.fps == 60 && parsed.bitrateMbps == 20, "合法端口/帧率/码率应被接受")
+check(parsed.directHost == "192.168.1.10" && parsed.serial == "192.168.1.2:5555", "直连地址与序列号应保留")
+check(parsed.duration == 1.5 && parsed.hidpi == false, "运行时长与 HiDPI 开关应保留")
+
+func rejects(_ args: [String], _ message: String) {
+    do {
+        _ = try Options.parse(args)
+        preconditionFailure(message)
+    } catch {
+        // expected
+    }
+}
+rejects(["--width", "abc"], "非法宽度必须报错")
+rejects(["--height", "abc"], "非法高度必须报错")
+rejects(["--duration", "abc"], "非法运行时长必须报错")
+rejects(["--duration", "0"], "零运行时长必须报错")
+rejects(["--port", "0"], "零端口必须报错")
+rejects(["--port", "70000"], "超出范围的端口必须报错")
+rejects(["--width", "100"], "过小的宽度必须报错")
+rejects(["--height", "100"], "过小的高度必须报错")
+rejects(["--fps", "10"], "过低的帧率必须报错")
+rejects(["--bitrate", "100"], "过高的码率必须报错")
+rejects(["--direct-host", "bad"], "非法直连地址必须报错")
+rejects(["--no-adb", "--direct-host", "192.168.1.10"], "--no-adb 与直连不能同时使用")
+rejects(["--token", ""], "空 token 必须报错")
+
 let interfaces = [
     LocalNetworkInterfaceAddress(name: "en0", address: "192.168.50.99", netmask: "255.255.255.0",
                                  isUp: true, isLoopback: false),
@@ -68,4 +100,5 @@ check(LocalNetwork.selectAddress(towards: "bad", routeInterface: nil,
                                  interfaces: interfaces) == nil,
       "无效目标地址不能匹配任意网卡")
 
-print("核心测试通过：尺寸解析、帧队列恢复、采集代次竞态、路由与子网选卡")
+runIntegrationTests()
+print("核心测试通过：尺寸解析、帧队列恢复、采集代次竞态、路由与子网选卡、严格参数解析")

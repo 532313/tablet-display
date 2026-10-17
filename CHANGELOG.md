@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- 触摸：黑边内松开也会发送 `up`；`/input` 断开时服务端自动释放鼠标；Android 视频重连改为 500ms 起、封顶 5s 的指数退避。
+- 参数：`--width`、`--height`、`--port`、`--duration` 等非法/越界值现在直接报错，不再静默回退。
+- HTTP：请求头和请求体读取增加 10 秒总超时；`/input` 连接不再被读超时误伤。
+- 签名：新增 `scripts/create-signing-identity.sh` 和 `make signing`，构建自动使用稳定的本地签名身份；菜单栏增加权限设置和日志入口。
+- 测试：新增 `/video` 帧格式与鉴权、`/input` 解析、断连释放、重连、请求超时的本机 socket 集成测试；新增 Android 纯 Java 协议/重连测试。
+- CI：新增 GitHub Actions，macOS 构建 + 核心测试，Ubuntu 构建 APK + Android 协议测试。
+- 安装：`make install` 覆盖旧版 App 并重建桌面启动器；启动器生成或签名校验失败会直接报错；修复 `pipefail` 下签名检测被 SIGPIPE 误判为 ad-hoc 的问题。
+- 签名：稳定本地签名已实战验证，重建并覆盖安装后 TCC 授权保留。
+
 ## 0.2.0 — 2026-10-18
 
 - 无线启动：自动优先无线 ADB、USB 一键切换到无线、记住地址。

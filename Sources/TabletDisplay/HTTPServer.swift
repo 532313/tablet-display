@@ -12,13 +12,15 @@ enum ServerError: LocalizedError {
     }
 }
 
-private struct PointerMessage: Decodable {
+struct PointerMessage: Decodable {
     let x: Double
     let y: Double
     let phase: String
 }
 
 final class HTTPServer: @unchecked Sendable {
+    typealias PointerHandler = (PointerMessage) -> Void
+
     private let frames: VideoFrameStore
     private let displayID: CGDirectDisplayID
     private let width: Int
@@ -26,19 +28,25 @@ final class HTTPServer: @unchecked Sendable {
     private let fps: Int
     private let token: String
     private let directPeer: in_addr?
+    private let requestTimeout: TimeInterval
+    private let pointerHandler: PointerHandler?
     private var listener: Int32 = -1
     private var clients: Set<Int32> = []
     private let stateLock = NSLock()
     private var isRunning = false
+    private(set) var boundPort: UInt16 = 0
 
     init(frames: VideoFrameStore, displayID: CGDirectDisplayID, width: Int, height: Int, fps: Int,
-         token: String, directPeerIP: String? = nil) {
+         token: String, directPeerIP: String? = nil, requestTimeout: TimeInterval = 10,
+         pointerHandler: PointerHandler? = nil) {
         self.frames = frames
         self.displayID = displayID
         self.width = width
         self.height = height
         self.fps = fps
         self.token = token
+        self.requestTimeout = requestTimeout
+        self.pointerHandler = pointerHandler
         if let directPeerIP {
             var address = in_addr()
             self.directPeer = directPeerIP.withCString {
@@ -71,8 +79,18 @@ final class HTTPServer: @unchecked Sendable {
             throw ServerError.listenFailed(code)
         }
 
+        var boundAddress = sockaddr_in()
+        var boundLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &boundAddress) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(fd, $0, &boundLength)
+            }
+        }
+        let actualPort = named == 0 ? UInt16(bigEndian: boundAddress.sin_port) : port
+
         stateLock.lock()
         listener = fd
+        boundPort = actualPort
         isRunning = true
         stateLock.unlock()
         DispatchQueue.global(qos: .userInitiated).async { [self] in
@@ -137,11 +155,21 @@ final class HTTPServer: @unchecked Sendable {
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout.size(ofValue: noDelay)))
         var keepAlive: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, socklen_t(MemoryLayout.size(ofValue: keepAlive)))
+        // Detect a tablet that vanished without a FIN, so an idle /input
+        // connection can still be released and a thread cannot leak forever.
+        var keepIdle: Int32 = 5
+        var keepInterval: Int32 = 5
+        var keepCount: Int32 = 3
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &keepIdle, socklen_t(MemoryLayout.size(ofValue: keepIdle)))
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, socklen_t(MemoryLayout.size(ofValue: keepInterval)))
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, socklen_t(MemoryLayout.size(ofValue: keepCount)))
         // A tablet that disappears without closing its socket must not pin a
         // server thread forever inside send().
         var sendTimeout = timeval(tv_sec: 5, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sendTimeout, socklen_t(MemoryLayout<timeval>.size))
         guard let request = readRequest(fd) else { return }
+        // /input keeps this socket open and can be idle for a long time.
+        setReceiveTimeout(fd, seconds: 0)
         let firstLine = request.header.split(separator: "\r\n", maxSplits: 1).first ?? ""
         let parts = firstLine.split(separator: " ")
         guard parts.count >= 2 else { return }
@@ -181,11 +209,14 @@ final class HTTPServer: @unchecked Sendable {
     }
 
     private func readRequest(_ fd: Int32) -> (header: String, body: Data)? {
+        let deadline = DispatchTime.now() + .milliseconds(max(1, Int(requestTimeout * 1_000)))
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         let separator = Data("\r\n\r\n".utf8)
         while data.count <= 16_384 {
+            guard setReceiveTimeout(fd, until: deadline) else { return nil }
             let count = recv(fd, &buffer, buffer.count, 0)
+            if count < 0 && errno == EINTR { continue }
             guard count > 0 else { return nil }
             data.append(contentsOf: buffer.prefix(count))
             guard let range = data.range(of: separator) else { continue }
@@ -195,13 +226,36 @@ final class HTTPServer: @unchecked Sendable {
             guard contentLength >= 0 && contentLength <= 1024 else { return nil }
             var body = Data(data[range.upperBound...])
             while body.count < contentLength {
+                guard setReceiveTimeout(fd, until: deadline) else { return nil }
                 let more = recv(fd, &buffer, min(buffer.count, contentLength - body.count), 0)
+                if more < 0 && errno == EINTR { continue }
                 guard more > 0 else { return nil }
                 body.append(contentsOf: buffer.prefix(more))
             }
             return (header, body.prefix(contentLength))
         }
         return nil
+    }
+
+    /// Applies the remaining request deadline to the next recv call. Returning
+    /// false means the deadline has passed before any data arrived.
+    private func setReceiveTimeout(_ fd: Int32, until deadline: DispatchTime) -> Bool {
+        let now = DispatchTime.now()
+        guard deadline > now else { return false }
+        let remaining = deadline.uptimeNanoseconds - now.uptimeNanoseconds
+        var timeout = timeval(tv_sec: Int(remaining / 1_000_000_000),
+                              tv_usec: Int32((remaining % 1_000_000_000) / 1_000))
+        if timeout.tv_sec == 0 && timeout.tv_usec == 0 { timeout.tv_usec = 1_000 }
+        return setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                          socklen_t(MemoryLayout<timeval>.size)) == 0
+    }
+
+    /// A zero timeout disables the receive timeout, which is used for the
+    /// long-lived /input stream after the request header has been read.
+    private func setReceiveTimeout(_ fd: Int32, seconds: Int) {
+        var timeout = timeval(tv_sec: seconds, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                   socklen_t(MemoryLayout<timeval>.size))
     }
 
     private func isAuthorized(_ header: String) -> Bool {
@@ -255,7 +309,18 @@ final class HTTPServer: @unchecked Sendable {
     }
 
     private func streamInput(_ fd: Int32) {
-        guard sendAll(fd, Data("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".utf8)) else { return }
+        guard sendAll(fd, Data("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\n\r\n".utf8)) else { return }
+        var isDown = false
+        var lastX = 0.5
+        var lastY = 0.5
+        // If the tablet disappears or the app goes to the background while
+        // the user is dragging, release the mouse instead of leaving the Mac
+        // stuck in a mouse-down state.
+        defer {
+            if isDown {
+                inject(PointerMessage(x: lastX, y: lastY, phase: "up"))
+            }
+        }
         while running() {
             guard let packet = receiveExactly(fd, count: 9) else { return }
             let xBits = packet[1..<5].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
@@ -271,6 +336,16 @@ final class HTTPServer: @unchecked Sendable {
             let x = Double(Float(bitPattern: xBits))
             let y = Double(Float(bitPattern: yBits))
             guard x.isFinite, y.isFinite, (0...1).contains(x), (0...1).contains(y) else { continue }
+            switch phase {
+            case "down", "drag":
+                isDown = true
+                lastX = x
+                lastY = y
+            case "up":
+                isDown = false
+            default:
+                break
+            }
             inject(PointerMessage(x: x, y: y, phase: phase))
         }
     }
@@ -282,6 +357,7 @@ final class HTTPServer: @unchecked Sendable {
             let received = result.withUnsafeMutableBytes { raw in
                 recv(fd, raw.baseAddress!.advanced(by: offset), count - offset, 0)
             }
+            if received < 0 && errno == EINTR { continue }
             guard received > 0 else { return nil }
             offset += received
         }
@@ -294,7 +370,8 @@ final class HTTPServer: @unchecked Sendable {
             var sent = 0
             while sent < raw.count {
                 let count = Darwin.send(fd, base.advanced(by: sent), raw.count - sent, 0)
-                if count <= 0 { return false }
+                if count < 0 && errno == EINTR { continue }
+                guard count > 0 else { return false }
                 sent += count
             }
             return true
@@ -302,6 +379,10 @@ final class HTTPServer: @unchecked Sendable {
     }
 
     private func inject(_ event: PointerMessage) {
+        if let pointerHandler {
+            pointerHandler(event)
+            return
+        }
         let bounds = CGDisplayBounds(displayID)
         let point = CGPoint(x: bounds.minX + event.x * bounds.width,
                             y: bounds.minY + event.y * bounds.height)

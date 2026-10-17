@@ -6,80 +6,6 @@ import Dispatch
 import Foundation
 import VirtualDisplayBridge
 
-struct Options {
-    var width: Int?
-    var height: Int?
-    var port: UInt16 = 9137
-    var serial: String?
-    var noADB = false
-    var duration: Double?
-    var bitrateMbps = 20
-    var fps = 60
-    var directHost: String?
-    var token: String?
-    var hidpi: Bool?
-
-    static func parse(_ args: [String]) throws -> Options {
-        var options = Options()
-        var index = 0
-        while index < args.count {
-            let arg = args[index]
-            switch arg {
-            case "--width", "--height", "--port", "--serial", "--duration", "--bitrate", "--fps", "--direct-host", "--token":
-                index += 1
-                guard index < args.count else { throw CLIError.invalid("\(arg) 缺少参数") }
-                let value = args[index]
-                switch arg {
-                case "--width": options.width = Int(value)
-                case "--height": options.height = Int(value)
-                case "--port": options.port = UInt16(value) ?? 0
-                case "--serial": options.serial = value
-                case "--bitrate": options.bitrateMbps = Int(value) ?? 0
-                case "--fps": options.fps = Int(value) ?? 0
-                case "--direct-host": options.directHost = value
-                case "--token": options.token = value
-                default: options.duration = Double(value)
-                }
-            case "--no-adb": options.noADB = true
-            case "--hidpi": options.hidpi = true
-            case "--no-hidpi": options.hidpi = false
-            case "--help", "-h":
-                print("用法: TabletDisplay [--width 2560 --height 1600] [--fps 60] [--bitrate 20] [--port 9137] [--serial 设备号] [--direct-host Mac局域网IP] [--token 令牌] [--hidpi|--no-hidpi] [--no-adb] [--duration 秒]")
-                Foundation.exit(0)
-            default: throw CLIError.invalid("未知参数 \(arg)")
-            }
-            index += 1
-        }
-        guard options.port > 0,
-              options.width.map({ (640...4096).contains($0) }) ?? true,
-              options.height.map({ (480...4096).contains($0) }) ?? true,
-              (5...50).contains(options.bitrateMbps),
-              (15...60).contains(options.fps),
-              options.token.map({ !$0.isEmpty }) ?? true,
-              !(options.noADB && options.directHost != nil),
-              options.directHost.map({ host in
-                  var address = in_addr()
-                  return host.withCString { inet_pton(AF_INET, $0, &address) == 1 }
-              }) ?? true,
-              options.duration.map({ $0 > 0 }) ?? true else {
-            throw CLIError.invalid("端口、分辨率、帧率、码率或运行时长无效")
-        }
-        return options
-    }
-}
-
-enum CLIError: LocalizedError {
-    case invalid(String)
-    case virtualDisplay
-
-    var errorDescription: String? {
-        switch self {
-        case .invalid(let message): return message
-        case .virtualDisplay: return "无法创建虚拟显示器。当前 macOS 可能不支持 CGVirtualDisplay 私有接口。"
-        }
-    }
-}
-
 final class TabletDisplayDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController?
 
@@ -92,7 +18,12 @@ final class TabletDisplayDelegate: NSObject, NSApplicationDelegate {
                 await MainActor.run { NSApp.terminate(nil) }
             } catch {
                 AppLog.write("错误：\(error.localizedDescription)")
-                if isatty(STDIN_FILENO) == 0 {
+                if let cliError = error as? CLIError, case .screenRecording = cliError {
+                    if isatty(STDIN_FILENO) == 0 {
+                        statusBar.showPermissionPrompt(.screenRecording,
+                                                       message: error.localizedDescription)
+                    }
+                } else if isatty(STDIN_FILENO) == 0 {
                     statusBar.showError(error.localizedDescription)
                 }
                 statusBar.update("启动失败")
@@ -125,7 +56,7 @@ struct TabletDisplayApp {
         if !CGPreflightScreenCaptureAccess() {
             AppLog.write("屏幕录制权限未授予，发起系统授权请求")
             if !CGRequestScreenCaptureAccess() {
-                throw CLIError.invalid("需要屏幕录制权限：请在“系统设置 → 隐私与安全性 → 屏幕录制”中勾选 Tablet Display，然后重新打开应用。")
+                throw CLIError.screenRecording
             }
         }
         statusBar.setPort(options.port)
@@ -241,6 +172,14 @@ struct TabletDisplayApp {
                 let prompt = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
                 _ = AXIsProcessTrustedWithOptions(prompt)
                 print("触摸控制尚未授权：请在系统设置 → 隐私与安全性 → 辅助功能中允许 Tablet Display。")
+                AppLog.write("辅助功能权限未授予，触摸暂不可用")
+                statusBar.update("触摸未授权 · 请允许辅助功能")
+                if isatty(STDIN_FILENO) == 0 {
+                    statusBar.showPermissionPrompt(
+                        .accessibility,
+                        message: "视频已开始传输，但触摸暂不可用。请在“系统设置 → 隐私与安全性 → 辅助功能”中允许 Tablet Display，然后重新启动应用。"
+                    )
+                }
             }
             await waitUntilStopped(duration: options.duration)
         } else {

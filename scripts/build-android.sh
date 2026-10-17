@@ -15,8 +15,8 @@ if [[ ! -x "$tools/aapt2" || ! -f "$androidJar" ]]; then
 fi
 
 mkdir -p build/android/classes build/android/dex
-javac -source 8 -target 8 -classpath "$androidJar" -d build/android/classes \
-  Android/src/dev/local/tabletdisplay/MainActivity.java
+javac -source 8 -target 8 -Xlint:-options -classpath "$androidJar" -d build/android/classes \
+  Android/src/dev/local/tabletdisplay/*.java
 classes=(build/android/classes/**/*.class(N))
 "$tools/d8" --min-api 29 --lib "$androidJar" --output build/android/dex "$classes[@]"
 "$tools/aapt2" link -o build/android/unsigned.apk -I "$androidJar" \

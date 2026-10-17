@@ -17,8 +17,8 @@ Mac                                   Android 平板
 - **VirtualDisplayBridge**：用 macOS 私有 `CGVirtualDisplay` 创建虚拟屏，选择模式并放到主屏右侧。
 - **ScreenCaptureKit**：按 60Hz 采集虚拟屏；静止画面由定时器重复编码最后一帧，避免部分硬解在无新输入时延迟出帧。采集生命周期代次会使停止前挂起的异步启动失效；停止时先取消定时器并排空采集队列，再关闭编码器。
 - **VideoToolbox**：H.264 High、实时模式、20Mbps 默认码率，关键帧间隔为 `fps / 2`。
-- **HTTPServer**：`/video` 输出带长度前缀的 H.264 帧；`/input` 接收 9 字节触摸包；token + 平板 IP 白名单。直连 IP 由系统路由表和网卡实际子网掩码确定。
-- **Android**：硬解到 `SurfaceView`，独立输出线程按 vsync 时间戳提交；触摸按实际视频区域归一化后回传。
+- **HTTPServer**：`/video` 输出带长度前缀的 H.264 帧；`/input` 接收 9 字节触摸包；token + 平板 IP 白名单。请求读取有 10 秒总超时；`/input` 断开时自动补发 `up`。直连 IP 由系统路由表和网卡实际子网掩码确定。
+- **Android**：硬解到 `SurfaceView`，独立输出线程按 vsync 时间戳提交；触摸按实际视频区域归一化后回传，黑边内松开也会发送 `up`；视频断线按 500ms 起、封顶 5s 的指数退避重连。
 - **启动器**：菜单栏应用（`LSUIElement`），提供状态、退出；桌面启动器负责传入 1470×956 的 UI 尺寸。
 
 ## 数据流
@@ -47,7 +47,7 @@ Mac                                   Android 平板
 - 屏幕录制：ScreenCaptureKit 必需。
 - 辅助功能：`CGEvent` 触摸注入必需。
 - 本地网络：无线 ADB / 局域网连接；应用包声明 `NSLocalNetworkUsageDescription`，首次连接时由系统显示用途说明。
-- ad-hoc 签名在每次重新构建后会改变，TCC 可能需要重新绑定核心应用。稳定签名（Developer ID 或固定自签名）可以避免这个问题。
+- ad-hoc 签名在每次重新构建后会改变，TCC 可能需要重新绑定核心应用。运行 `make signing` 创建固定的本地自签名身份，或使用 Developer ID/Apple Development 身份，可以避免这个问题。菜单栏提供“权限设置”和“打开日志”入口。
 
 ## 构建产物
 

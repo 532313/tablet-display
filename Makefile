@@ -1,7 +1,7 @@
 SHELL := /bin/zsh
 APP   := build/TabletDisplay.app
 
-.PHONY: all app apk install-tablet icon test run wireless dmg release install clean distclean
+.PHONY: all app apk install-tablet icon test test-core test-android signing run wireless dmg release install clean distclean
 
 all: app
 
@@ -17,8 +17,16 @@ install-tablet: apk
 icon:
 	./scripts/build-icon.sh
 
-test:
+test: test-core test-android
+
+test-core:
 	./scripts/test-core.sh
+
+test-android:
+	./scripts/test-android.sh
+
+signing:
+	./scripts/create-signing-identity.sh
 
 run:
 	./scripts/run.sh

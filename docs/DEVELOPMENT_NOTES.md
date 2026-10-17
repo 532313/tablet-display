@@ -1,5 +1,17 @@
 # Tablet Display 开发记录
 
+## 2026-10-18 加固：触摸、超时、签名、CI
+
+- **触摸手势**：`MainActivity` 增加 `pointerDown` 状态；`down` 只在视频区域内被接受；`drag` 在黑边内保持最后有效坐标；`up/cancel` 无论是否滑出视频区域都会发送。服务端 `/input` 连接断开时，如果仍处于按下/拖动状态，会自动补发一次 `up`，覆盖平板切后台、断网等路径。
+- **严格参数**：`Options`/`CLIError` 移到 `Sources/TabletDisplay/Options.swift`；`--width/--height/--port/--duration/--fps/--bitrate` 非法或越界直接抛出具体错误，`--direct-host` 必须是 IPv4，`--no-adb` 与 `--direct-host` 互斥。
+- **HTTP 读超时**：请求头和请求体共用一个 10 秒 deadline，慢速/空连接会被关闭；请求读取完成后清除 `SO_RCVTIMEO`，避免影响长连接 `/input`。`HTTPServer` 新增 `boundPort` 和可注入的 `pointerHandler`，便于本机 socket 测试。
+- **稳定签名**：新增 `scripts/create-signing-identity.sh`（`make signing`），生成并信任 `Tablet Display Local` 本地代码签名身份，材料放在 `~/Library/Application Support/TabletDisplay/signing`；`build-app.sh` 自动检测并使用，找不到时回退 ad-hoc 并打印提示。首次切换后仍需在 TCC 中重新添加一次核心应用。
+- **权限引导**：菜单栏新增“权限设置”（屏幕录制/辅助功能/本地网络）和“打开日志”；屏幕录制缺失时弹窗可直接打开对应系统设置，辅助功能缺失时提示触摸暂不可用。
+- **覆盖安装**：`install-app.sh` 现在覆盖 `~/Applications/Tablet Display.app` 并校验签名；`make-launcher.sh` 会删除旧桌面启动器后重新生成，校验可执行文件和签名，失败时不再被 `|| true` 静默吞掉。
+- **测试**：`make test-core` 现在包含本机 socket 集成测试：`/video` 帧格式与 401、`/input` 9 字节包解析、断连自动 `up`、重连从最新关键帧开始、空连接请求超时。`make test-android` 用纯 Java 测 `VideoProtocol` 和 `ReconnectPolicy`。新增 GitHub Actions 两个 job。
+- **验证结果**：`make test` 通过；`./scripts/build-android.sh` 成功生成 APK；`swift build --disable-sandbox -c release` 成功。稳定签名 `Tablet Display Local` 已创建并信任；实测重建 + `make install` 覆盖安装后，屏幕录制/辅助功能授权保留，桌面启动器拉起 1470×956，平板稳定约 60fps。尚未做长时间稳定性/触摸逐点回归。
+- **遗留**：Android `Surface` 销毁/重建仍未 join 旧视频线程，快速前后台切换仍有重复解码线程的竞态风险；`/health` 仍只判断“曾经有帧”；固定码率/无自适应未改。
+
 ## 目标与当前状态
 
 - 目标：把已通过 ADB 连接的 Android 平板作为 Mac 无线扩展屏，60fps、低延迟、清晰；Dock 留在主屏。
