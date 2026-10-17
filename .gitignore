@@ -1,0 +1,11 @@
+.build/
+build/
+dist/
+.DS_Store
+*.dmg
+*.idsig
+Resources/AppIcon.iconset/
+*.keystore
+*.p12
+*.mobileprovision
+.env
