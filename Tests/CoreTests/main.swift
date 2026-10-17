@@ -31,4 +31,41 @@ let lagging = VideoFrameStore()
 for number in 0..<32 { lagging.append(Data([UInt8(number)]), keyframe: number % 10 == 0) }
 check(lagging.next(after: 1, keyframeOnly: false)?.data == Data([30]), "积压超过 15 帧时应追上最近的关键帧")
 
-print("核心测试通过：尺寸解析、关键帧启动、顺序传输、积压丢帧与溢出恢复")
+var captureGeneration = CaptureGeneration()
+let firstCapture = captureGeneration.start()
+check(captureGeneration.isCurrent(firstCapture), "新启动的采集代次应有效")
+_ = captureGeneration.stop()
+check(!captureGeneration.isCurrent(firstCapture), "停止应使挂起中的旧启动失效")
+let secondCapture = captureGeneration.start()
+check(captureGeneration.isCurrent(secondCapture) && !captureGeneration.isCurrent(firstCapture),
+      "重新启动只应接受最新采集代次")
+
+let interfaces = [
+    LocalNetworkInterfaceAddress(name: "en0", address: "192.168.50.99", netmask: "255.255.255.0",
+                                 isUp: true, isLoopback: false),
+    LocalNetworkInterfaceAddress(name: "en1", address: "192.168.50.1", netmask: "255.255.255.248",
+                                 isUp: true, isLoopback: false),
+    LocalNetworkInterfaceAddress(name: "lo0", address: "192.168.50.2", netmask: "255.255.255.0",
+                                 isUp: true, isLoopback: true),
+    LocalNetworkInterfaceAddress(name: "en2", address: "192.168.50.3", netmask: "255.255.255.0",
+                                 isUp: false, isLoopback: false)
+]
+check(LocalNetwork.selectAddress(towards: "192.168.50.6", routeInterface: nil,
+                                 interfaces: interfaces) == "192.168.50.1",
+      "网卡选择应使用真实掩码并优先最长匹配前缀")
+let overlappingInterfaces = [
+    LocalNetworkInterfaceAddress(name: "en0", address: "10.0.0.2", netmask: "255.255.255.0",
+                                 isUp: true, isLoopback: false),
+    LocalNetworkInterfaceAddress(name: "en1", address: "10.0.0.3", netmask: "255.255.255.0",
+                                 isUp: true, isLoopback: false)
+]
+check(LocalNetwork.selectAddress(towards: "10.0.0.9", routeInterface: "en1",
+                                 interfaces: overlappingInterfaces) == "10.0.0.3",
+      "有重叠网段时应优先使用系统路由指定的网卡")
+check(LocalNetwork.parseRouteInterface("route to: 192.168.1.2\ninterface: en7\n") == "en7",
+      "应解析 route 查询结果中的接口")
+check(LocalNetwork.selectAddress(towards: "bad", routeInterface: nil,
+                                 interfaces: interfaces) == nil,
+      "无效目标地址不能匹配任意网卡")
+
+print("核心测试通过：尺寸解析、帧队列恢复、采集代次竞态、路由与子网选卡")

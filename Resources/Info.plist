@@ -30,5 +30,7 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Tablet Display 通过本地网络向 Android 平板传输屏幕画面并接收触摸操作。</string>
 </dict>
 </plist>

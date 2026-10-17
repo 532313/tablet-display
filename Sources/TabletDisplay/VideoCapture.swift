@@ -71,9 +71,33 @@ enum CaptureError: LocalizedError {
     }
 }
 
+/// A token invalidates any capture start that was suspended in an async call
+/// when stop/restart changes the requested lifecycle.
+struct CaptureGeneration {
+    private(set) var value: UInt64 = 0
+    private(set) var isStopped = false
+
+    mutating func start() -> UInt64 {
+        value &+= 1
+        isStopped = false
+        return value
+    }
+
+    mutating func stop() -> UInt64 {
+        value &+= 1
+        isStopped = true
+        return value
+    }
+
+    func isCurrent(_ candidate: UInt64) -> Bool {
+        value == candidate && !isStopped
+    }
+}
+
 final class H264Encoder {
     private var session: VTCompressionSession?
     private let frames: VideoFrameStore
+    private let sessionLock = NSLock()
     private let statsLock = NSLock()
     private var statsStart = Date()
     private var submitted = 0
@@ -135,7 +159,11 @@ final class H264Encoder {
     }
 
     func encode(_ image: CVImageBuffer, timestamp: CMTime) {
-        guard let session else { return }
+        sessionLock.lock()
+        guard let session else {
+            sessionLock.unlock()
+            return
+        }
         var flags = VTEncodeInfoFlags()
         let status = VTCompressionSessionEncodeFrame(
             session, imageBuffer: image,
@@ -143,6 +171,7 @@ final class H264Encoder {
             duration: .invalid, frameProperties: nil,
             sourceFrameRefcon: nil, infoFlagsOut: &flags
         )
+        sessionLock.unlock()
         if status != noErr { fputs("H.264 编码帧失败：\(status)\n", stderr) }
         statsLock.lock()
         submitted += 1
@@ -161,10 +190,13 @@ final class H264Encoder {
     }
 
     func stop() {
-        guard let session else { return }
-        VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
-        VTCompressionSessionInvalidate(session)
-        self.session = nil
+        sessionLock.lock()
+        let current = session
+        session = nil
+        sessionLock.unlock()
+        guard let current else { return }
+        VTCompressionSessionCompleteFrames(current, untilPresentationTimeStamp: .invalid)
+        VTCompressionSessionInvalidate(current)
     }
 
     private func receive(status: OSStatus, flags: VTEncodeInfoFlags, sampleBuffer: CMSampleBuffer?) {
@@ -235,8 +267,8 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private var config: Config?
     private var timer: DispatchSourceTimer?
     private var stream: SCStream?
-    private var stopping = false
-    private var restarting = false
+    private var generation = CaptureGeneration()
+    private var restartingGeneration: UInt64?
 
     init(encoder: H264Encoder) { self.encoder = encoder }
 
@@ -253,31 +285,44 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     }
 
     func start(displayID: CGDirectDisplayID, width: Int, height: Int, fps: Int) async throws {
-        withState {
+        let captureGeneration = withState { () -> UInt64 in
             config = Config(displayID: displayID, width: width, height: height, fps: fps)
-            stopping = false
+            restartingGeneration = nil
+            return generation.start()
         }
-        try await startStream()
+        _ = try await startStream(generation: captureGeneration)
     }
 
-    private func startStream() async throws {
-        let snapshot = withState { (config, stopping) }
-        guard let current = snapshot.0, !snapshot.1 else { return }
+    private func startStream(generation captureGeneration: UInt64) async throws -> Bool {
+        let snapshot = withState { (config, generation.isCurrent(captureGeneration)) }
+        guard let current = snapshot.0, snapshot.1 else { return false }
 
         var target: SCDisplay?
         for _ in 0..<20 {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            guard isCurrent(captureGeneration) else { return false }
             target = content.displays.first(where: { $0.displayID == current.displayID })
             if target != nil { break }
             try await Task.sleep(nanoseconds: 250_000_000)
+            guard isCurrent(captureGeneration) else { return false }
         }
         guard let target else { throw CaptureError.displayUnavailable }
 
-        if let old = withState({ stream }) { try? await old.stopCapture() }
-        withState { stream = nil }
-        timer?.cancel()
-        timer = nil
+        let previous = withState { () -> (SCStream?, DispatchSourceTimer?)? in
+            guard generation.isCurrent(captureGeneration) else { return nil }
+            let old = (stream, timer)
+            stream = nil
+            timer = nil
+            return old
+        }
+        guard let previous else { return false }
+        previous.1?.cancel()
+        if let old = previous.0 { try? await old.stopCapture() }
+        // The timer and any already queued ScreenCaptureKit callbacks share
+        // this queue. Drain them before clearing the image or changing streams.
+        queue.sync {}
         withImage { latestImage = nil }
+        guard isCurrent(captureGeneration) else { return false }
 
         let filter = SCContentFilter(display: target, excludingApplications: [], exceptingWindows: [])
         let streamConfig = SCStreamConfiguration()
@@ -290,16 +335,6 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         try newStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         try await newStream.startCapture()
 
-        let stopAfterStart = withState { () -> Bool in
-            if stopping { return true }
-            stream = newStream
-            return false
-        }
-        guard !stopAfterStart else {
-            try? await newStream.stopCapture()
-            return
-        }
-
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .nanoseconds(1_000_000_000 / current.fps),
                        leeway: .milliseconds(1))
@@ -308,20 +343,35 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
             guard let image = self.withImage({ self.latestImage }) else { return }
             self.encoder.encode(image, timestamp: CMClockGetTime(CMClockGetHostTimeClock()))
         }
-        self.timer = timer
-        timer.resume()
+        let installed = withState { () -> Bool in
+            guard generation.isCurrent(captureGeneration) else { return false }
+            stream = newStream
+            self.timer = timer
+            timer.resume()
+            return true
+        }
+        guard installed else {
+            // A dispatch source must be resumed before it can be canceled.
+            timer.resume()
+            timer.cancel()
+            try? await newStream.stopCapture()
+            return false
+        }
+        return true
     }
 
     func stop() async {
-        let currentStream = withState { () -> SCStream? in
-            stopping = true
-            let value = stream
+        let previous = withState { () -> (SCStream?, DispatchSourceTimer?) in
+            _ = generation.stop()
+            restartingGeneration = nil
+            let value = (stream, timer)
             stream = nil
+            timer = nil
             return value
         }
-        timer?.cancel()
-        timer = nil
-        if let currentStream { try? await currentStream.stopCapture() }
+        previous.1?.cancel()
+        if let currentStream = previous.0 { try? await currentStream.stopCapture() }
+        queue.sync {}
         withImage { latestImage = nil }
         encoder.stop()
     }
@@ -342,37 +392,51 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         fputs("画面采集停止：\(error.localizedDescription)\n", stderr)
-        scheduleRestart()
+        scheduleRestart(for: stream)
     }
 
-    private func scheduleRestart() {
-        let shouldStart = withState { () -> Bool in
-            if stopping || restarting { return false }
-            restarting = true
-            return true
+    private func scheduleRestart(for stoppedStream: SCStream) {
+        let restartGeneration = withState { () -> UInt64? in
+            guard !generation.isStopped, stream === stoppedStream else { return nil }
+            let current = generation.value
+            guard restartingGeneration != current else { return nil }
+            restartingGeneration = current
+            return current
         }
-        guard shouldStart else { return }
+        guard let restartGeneration else { return }
 
         Task { [weak self] in
             guard let self else { return }
             var attempt = 0
-            while true {
+            while self.isCurrent(restartGeneration) {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if self.withState({ self.stopping }) { break }
+                guard self.isCurrent(restartGeneration) else { break }
                 attempt += 1
                 do {
-                    try await self.startStream()
-                    let recovered = self.withState { self.stream != nil && !self.stopping }
+                    let didStart = try await self.startStream(generation: restartGeneration)
+                    guard didStart else { break }
+                    let recovered = self.withState {
+                        self.generation.isCurrent(restartGeneration) && self.stream != nil
+                    }
                     if recovered {
                         fputs("画面采集已自动恢复\n", stderr)
                     }
                     break
                 } catch {
+                    guard self.isCurrent(restartGeneration) else { break }
                     fputs("画面采集恢复失败（第 \(attempt) 次）：\(error.localizedDescription)\n", stderr)
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                 }
             }
-            self.withState { self.restarting = false }
+            self.withState {
+                if self.restartingGeneration == restartGeneration {
+                    self.restartingGeneration = nil
+                }
+            }
         }
+    }
+
+    private func isCurrent(_ captureGeneration: UInt64) -> Bool {
+        withState { generation.isCurrent(captureGeneration) }
     }
 }
