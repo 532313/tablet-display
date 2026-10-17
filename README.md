@@ -26,19 +26,20 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 - macOS 13 或更新版本（当前在 macOS 27 / Apple M5 验证）。
 - Xcode Command Line Tools。
 - Android SDK：API 34、Build Tools 36.0.0、Platform Tools。
+- JDK：默认使用 Android Studio 的 JBR；如果不是默认安装位置，请设置 `JAVA_HOME`。
 - 平板开启 USB 调试；无线模式要求 Mac 与平板在同一局域网。
 - 首次运行需要授予“屏幕录制”“辅助功能”“本地网络”。
 
 ## 安装
 
-从 [dist](dist) 里的 DMG 安装，或自行构建：
+从源码构建：
 
 ```sh
 make app        # 构建 Mac 应用和 Android APK
 make dmg        # 生成 dist/Tablet Display-0.2.0.dmg
 ```
 
-DMG 里把 **Tablet Display.app** 拖到“应用程序”。当前 DMG 使用 ad-hoc 签名，未公证；首次打开可能需要右键“打开”。
+DMG 里把 **Tablet Display.app** 拖到“应用程序”。当前构建使用 ad-hoc 签名，未公证；首次打开可能需要右键“打开”。仓库不提交 DMG/APK，构建后才会生成。
 
 也可以直接安装到当前用户目录：
 
