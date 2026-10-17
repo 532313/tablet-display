@@ -45,8 +45,11 @@ DMG 里把 **Tablet Display.app** 拖到“应用程序”。当前构建使用 
 也可以直接安装到当前用户目录：
 
 ```sh
-make install    # 安装到 ~/Applications，并生成桌面启动器
+make install         # 安装 Mac App 到 ~/Applications，并生成桌面启动器
+make install-tablet  # 只把平板接收端 APK 装到已连接平板
 ```
+
+Mac App 启动时会自动把内置的 APK 安装/更新到平板；`make install-tablet` 适合只想单独更新平板端、不想动 Mac App 和 TCC 权限的场景。
 
 ## 使用
 
@@ -115,11 +118,13 @@ macOS 的 ad-hoc 签名在每次重新构建后会变化，TCC 可能要求重�
 ## 开发
 
 ```sh
-make app        # 构建 Mac app + APK
-make test       # 核心测试
-make run        # 本机运行构建产物
-make icon       # 从 Resources/AppIcon-1024.png 重新生成 icns
-make clean      # 删除编译缓存和构建产物
+make app            # 构建 Mac app + APK
+make apk            # 只构建平板接收端 APK
+make install-tablet # 把 APK 直接装到已连接的平板
+make test           # 核心测试
+make run            # 本机运行构建产物
+make icon           # 从 Resources/AppIcon-1024.png 重新生成 icns
+make clean          # 删除编译缓存和构建产物
 ```
 
 项目结构：

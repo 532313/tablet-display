@@ -14,6 +14,12 @@
 - 重新签名再次清空 TCC；屏幕录制与辅助功能重新绑定核心应用后已验证：连续启动无弹窗，1470×956、60fps。
 - 当前运行：PID 2510，启动器 exec 核心应用（1470×956）。
 
+## 00:45 增加平板端独立构建/安装
+
+- `make apk` 只构建 `build/TabletDisplay.apk`。
+- `make install-tablet` 对已连接设备执行 `adb install -r`，不替换 Mac App，不触发 TCC 重新授权。
+- Mac App 启动时仍会自动推送内置 APK；两个入口共用同一个 Android 调试签名 key。
+
 ## 00:40 清理目录与签名 key 外置
 
 - Android 调试签名 key 从 `build/android/debug.keystore` 移到 `~/Library/Application Support/TabletDisplay/debug.keystore`，并用它重新构建 APK，确认证书 SHA-256 仍是 `f283a66e…`（与平板已安装版一致）。

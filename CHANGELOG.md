@@ -9,6 +9,7 @@
 - 安全：每次运行生成一次性 token，`/video`、`/input` 需要 Bearer 鉴权。
 - 桌面体验：菜单栏状态项、自定义图标、桌面启动器和单实例保护。
 - 打包：版本化 Info.plist、release keystore 支持、DMG/notarize 脚本。
+- `make apk` 单独构建平板接收端，`make install-tablet` 直接 `adb install -r` 到已连接平板。
 - 分辨率：默认读取 `wm size` 的 Physical size；桌面启动器默认 1470×956（13 寸 MacBook UI 尺寸）。
 
 ## 0.1.0 — 2026-10-17
