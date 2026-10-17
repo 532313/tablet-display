@@ -49,6 +49,9 @@ check(parsed.width == 1920 && parsed.height == 1200, "合法分辨率应被接�
 check(parsed.port == 9137 && parsed.fps == 60 && parsed.bitrateMbps == 20, "合法端口/帧率/码率应被接受")
 check(parsed.directHost == "192.168.1.10" && parsed.serial == "192.168.1.2:5555", "直连地址与序列号应保留")
 check(parsed.duration == 1.5 && parsed.hidpi == false, "运行时长与 HiDPI 开关应保留")
+check(parsed.bitrateExplicit, "显式 --bitrate 应被记录")
+let defaultOptions = try! Options.parse([])
+check(!defaultOptions.bitrateExplicit, "未传 --bitrate 时不应标记为显式")
 
 func rejects(_ args: [String], _ message: String) {
     do {

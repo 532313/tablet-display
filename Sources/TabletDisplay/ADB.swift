@@ -183,9 +183,17 @@ struct ADB {
     func screenSize() -> (Int, Int)? {
         // Android's `wm size` can report the unrotated override size. DisplayInfo
         // reports the current logical size after rotation, matching screenshots.
-        let displayInfo = try? command(["shell", "dumpsys", "display"])
-        let wmOutput = try? command(["shell", "wm", "size"])
-        return Self.parseScreenSize(displayInfo: displayInfo, wmOutput: wmOutput)
+        // A just-connected wireless transport can briefly report offline, so
+        // retry before failing startup.
+        for attempt in 0..<3 {
+            let displayInfo = try? command(["shell", "dumpsys", "display"])
+            let wmOutput = try? command(["shell", "wm", "size"])
+            if let size = Self.parseScreenSize(displayInfo: displayInfo, wmOutput: wmOutput) {
+                return size
+            }
+            if attempt < 2 { Thread.sleep(forTimeInterval: 0.5) }
+        }
+        return nil
     }
 
     /// Returns the panel's physical resolution, in landscape orientation as

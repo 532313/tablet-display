@@ -9,6 +9,7 @@ struct Options {
     var noADB = false
     var duration: Double?
     var bitrateMbps = 20
+    var bitrateExplicit = false
     var fps = 60
     var directHost: String?
     var token: String?
@@ -45,6 +46,7 @@ struct Options {
                     options.duration = parsed
                 case "--bitrate":
                     options.bitrateMbps = try integer(value, option: arg, range: 5...50)
+                    options.bitrateExplicit = true
                 case "--fps":
                     options.fps = try integer(value, option: arg, range: 15...60)
                 case "--direct-host":

@@ -6,10 +6,12 @@ final class StatusBarController: NSObject, @unchecked Sendable {
     private let item: NSStatusItem
     private let statusItem: NSMenuItem
     private var port: UInt16
+    private let controlPanel: ControlPanelController?
 
     @MainActor
-    init(port: UInt16 = 9137) {
+    init(port: UInt16 = 9137, controlPanel: ControlPanelController? = nil) {
         self.port = port
+        self.controlPanel = controlPanel
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = NSMenuItem(title: "正在启动…", action: nil, keyEquivalent: "")
         super.init()
@@ -20,6 +22,13 @@ final class StatusBarController: NSObject, @unchecked Sendable {
         let menu = NSMenu()
         menu.addItem(statusItem)
         menu.addItem(.separator())
+        if controlPanel != nil {
+            let panel = NSMenuItem(title: "打开控制面板", action: #selector(openControlPanel),
+                                   keyEquivalent: ",")
+            panel.target = self
+            menu.addItem(panel)
+            menu.addItem(.separator())
+        }
         let open = NSMenuItem(title: "打开状态页", action: #selector(openHealth), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
@@ -99,6 +108,10 @@ final class StatusBarController: NSObject, @unchecked Sendable {
         } else {
             DispatchQueue.main.sync(execute: present)
         }
+    }
+
+    @objc private func openControlPanel() {
+        MainActor.assumeIsolated { controlPanel?.show() }
     }
 
     @objc private func openHealth() {

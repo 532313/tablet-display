@@ -94,7 +94,7 @@ struct CaptureGeneration {
     }
 }
 
-final class H264Encoder {
+final class H264Encoder: @unchecked Sendable {
     private var session: VTCompressionSession?
     private let frames: VideoFrameStore
     private let sessionLock = NSLock()
@@ -187,6 +187,19 @@ final class H264Encoder {
             statsStart = Date()
         }
         statsLock.unlock()
+    }
+
+    /// Updates the target bitrate without restarting capture or the encoder.
+    func updateBitrate(_ bitrate: Int) {
+        guard bitrate > 0 else { return }
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        guard let session else { return }
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate,
+                             value: NSNumber(value: bitrate))
+        let rateLimit = [NSNumber(value: bitrate / 8), NSNumber(value: 1)] as CFArray
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits,
+                             value: rateLimit)
     }
 
     func stop() {
