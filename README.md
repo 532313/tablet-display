@@ -19,6 +19,7 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 - 横屏锁定、断线重连、采集自动重启。
 - token 鉴权 + 平板 IP 白名单。
 - 菜单栏应用、自定义图标、桌面启动器。
+- Android 自适应启动图标，与 macOS 图标使用同一套视觉。
 - 版本化 `.app`、DMG 打包、notarize 脚本。
 
 ## 环境要求

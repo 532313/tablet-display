@@ -10,6 +10,7 @@
 - CI：新增 GitHub Actions，macOS 构建 + 核心测试，Ubuntu 构建 APK + Android 协议测试。
 - 安装：`make install` 覆盖旧版 App 并重建桌面启动器；启动器生成或签名校验失败会直接报错；修复 `pipefail` 下签名检测被 SIGPIPE 误判为 ad-hoc 的问题。
 - 签名：稳定本地签名已实战验证，重建并覆盖安装后 TCC 授权保留。
+- Android：新增自适应启动图标（渐变背景 + 平板/双窗口/光标/Wi-Fi 前景），`aapt2` 构建已接入资源编译。
 
 ## 0.2.0 — 2026-10-18
 

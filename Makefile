@@ -45,7 +45,7 @@ install:
 clean:
 	rm -rf .build
 	rm -rf build/android/classes build/android/dex
-	rm -f build/android/unsigned.apk build/android/aligned.apk
+	rm -f build/android/unsigned.apk build/android/aligned.apk build/android/res.zip
 	rm -rf build/TabletDisplay.app build/TabletDisplay.apk build/core-tests
 	rm -f build/TabletDisplay.apk.idsig
 

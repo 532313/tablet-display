@@ -19,8 +19,10 @@ javac -source 8 -target 8 -Xlint:-options -classpath "$androidJar" -d build/andr
   Android/src/dev/local/tabletdisplay/*.java
 classes=(build/android/classes/**/*.class(N))
 "$tools/d8" --min-api 29 --lib "$androidJar" --output build/android/dex "$classes[@]"
+"$tools/aapt2" compile --dir Android/res -o build/android/res.zip
 "$tools/aapt2" link -o build/android/unsigned.apk -I "$androidJar" \
-  --manifest Android/AndroidManifest.xml --min-sdk-version 29 --target-sdk-version 31
+  --manifest Android/AndroidManifest.xml -R build/android/res.zip \
+  --min-sdk-version 29 --target-sdk-version 31
 zip -q -j build/android/unsigned.apk build/android/dex/classes.dex
 "$tools/zipalign" -f 4 build/android/unsigned.apk build/android/aligned.apk
 
