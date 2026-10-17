@@ -24,6 +24,8 @@ final class ControlPanelModel: ObservableObject {
     @Published var transport = "—"
     @Published var tablet = "—"
     @Published var server = "—"
+    @Published var macAddress = "—"
+    @Published var tabletAddressInput = ""
 
     @Published var resolutionID: String {
         didSet { saveResolution() }
@@ -58,6 +60,7 @@ final class ControlPanelModel: ObservableObject {
 
     var onBitrateChange: (@Sendable (Int) -> Void)?
     var onRestart: (() -> Void)?
+    var onReconnect: ((String) -> Void)?
     var onQuit: (() -> Void)?
     var onOpenHealth: (() -> Void)?
     var onOpenLog: (() -> Void)?
@@ -184,6 +187,32 @@ private struct ControlPanelView: View {
                     valueText(model.server)
                 }
             }
+
+            Divider()
+
+            Text("网络")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+                GridRow {
+                    detailLabel("本机 IP")
+                    valueText(model.macAddress)
+                }
+                GridRow {
+                    detailLabel("平板 IP")
+                    HStack(spacing: 8) {
+                        TextField("192.168.1.51 或 IP:5555", text: $model.tabletAddressInput)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 210)
+                        Button("重新连接") { model.onReconnect?(model.tabletAddressInput) }
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            Text("留空重连会自动扫描（需 USB）；填写新 IP 会走 ADB 隧道，Mac IP 变化不受影响。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Divider()
 
@@ -314,12 +343,15 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
         window.delegate = self
-        window.setFrameAutosaveName("TabletDisplayControlPanel")
-        window.setContentSize(NSSize(width: 480, height: 700))
+        window.setFrameAutosaveName("TabletDisplayControlPanelV2")
+        window.setContentSize(NSSize(width: 480, height: 800))
         window.center()
 
         model.onRestart = { [weak self] in
             MainActor.assumeIsolated { self?.restart() }
+        }
+        model.onReconnect = { [weak self] input in
+            MainActor.assumeIsolated { self?.reconnect(input) }
         }
         model.onQuit = {
             MainActor.assumeIsolated { NSApp.terminate(nil) }
@@ -371,7 +403,17 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
     }
 
     nonisolated func updateTablet(_ text: String) {
-        Task { @MainActor [weak self] in self?.model.tablet = text }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.model.tablet = text
+            if self.model.tabletAddressInput.isEmpty {
+                self.model.tabletAddressInput = text
+            }
+        }
+    }
+
+    nonisolated func updateMacAddress(_ text: String) {
+        Task { @MainActor [weak self] in self?.model.macAddress = text }
     }
 
     nonisolated func updateServer(_ text: String) {
@@ -411,17 +453,65 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
     }
 
     @MainActor
-    private func restart() {
+    private func reconnect(_ input: String) {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else {
+            model.status = "正在重新连接…"
+            model.statusLevel = .starting
+            restart(forceAuto: true)
+            return
+        }
+
+        let endpoint = value.contains(":") ? value : value + ":5555"
+        guard ADB.isWireless(endpoint) else {
+            model.status = "平板地址格式无效，请输入 IPv4 或 IP:端口"
+            model.statusLevel = .error
+            return
+        }
+
+        model.status = "正在连接 \(endpoint)…"
+        model.statusLevel = .starting
+        Task.detached { [weak self] in
+            do {
+                let connected = try ADB.connectSaved(endpoint)
+                ADB.saveEndpoint(connected)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.model.tabletAddressInput = connected
+                    self.restart(endpoint: connected)
+                }
+            } catch {
+                await MainActor.run {
+                    self?.model.status = "连接失败：\(error.localizedDescription)"
+                    self?.model.statusLevel = .error
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func restart(endpoint: String? = nil, forceAuto: Bool = false) {
         guard let executable = Bundle.main.executableURL?.path else { return }
+
+        model.status = "正在重启…"
+        model.statusLevel = .starting
 
         var arguments: [String] = []
         var iterator = CommandLine.arguments.dropFirst().makeIterator()
         let displayValueOptions: Set<String> = ["--width", "--height", "--fps", "--bitrate"]
         let passthroughValueOptions: Set<String> = ["--port", "--serial", "--duration",
                                                     "--direct-host", "--token"]
+        let resetTransport = endpoint != nil || forceAuto
         while let argument = iterator.next() {
             if displayValueOptions.contains(argument) {
                 _ = iterator.next()
+                continue
+            }
+            if resetTransport && (argument == "--serial" || argument == "--direct-host") {
+                _ = iterator.next()
+                continue
+            }
+            if resetTransport && argument == "--no-adb" {
                 continue
             }
             if argument == "--hidpi" || argument == "--no-hidpi" {
@@ -431,6 +521,11 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
             if passthroughValueOptions.contains(argument), let value = iterator.next() {
                 arguments.append(value)
             }
+        }
+        if let endpoint {
+            // An explicit endpoint without --direct-host forces the ADB
+            // tunnel, so a changed Mac LAN address cannot break the session.
+            arguments += ["--serial", endpoint]
         }
         arguments += [
             "--width", "\(model.width)",
@@ -455,6 +550,8 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
             try process.run()
         } catch {
             AppLog.write("重启失败：\(error.localizedDescription)")
+            model.status = "重启失败：\(error.localizedDescription)"
+            model.statusLevel = .error
             return
         }
 

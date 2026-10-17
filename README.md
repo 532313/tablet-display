@@ -20,6 +20,7 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 - token 鉴权 + 平板 IP 白名单。
 - 菜单栏应用、自定义图标、桌面启动器。
 - 启动控制面板：实时状态、分辨率/帧率/码率设置、启动显示/关闭退出开关、保存并重启、权限/日志/状态页/退出。
+- 网络变化恢复：显示本机/平板 IP，支持手动输入平板新 IP 重连；启动时找不到平板不再直接退出。
 - Android 自适应启动图标，与 macOS 图标使用同一套视觉。
 - 版本化 `.app`、DMG 打包、notarize 脚本。
 
@@ -89,6 +90,7 @@ make wireless
 
 - 双击 `~/Desktop/Tablet Display 启动器.app`，或从 `~/Applications` 打开 **Tablet Display**。
 - 启动后会显示控制面板：可查看虚拟屏/传输/平板状态，设置分辨率/帧率/码率，切换启动显示与关闭退出行为，打开权限设置、状态页、日志或退出。
+- 网络变化时：把平板新 IP 填入“平板 IP”并点“重新连接”；留空则重新自动扫描（需要插 USB）。手动重连走 ADB 隧道，Mac IP 变化也不影响。
 - 码率即时生效；分辨率和帧率保存后点“保存并重启”生效，桌面启动器下次也会沿用保存值。
 - 默认关闭控制面板后应用仍在菜单栏运行；菜单栏 **Tablet Display → 打开控制面板** 可重新显示。也可在设置中勾选“关闭窗口时退出应用”。
 - 终端启动：`./scripts/run-wireless.sh`；USB/ADB 隧道：`./scripts/run-wireless.sh --adb-tunnel`。

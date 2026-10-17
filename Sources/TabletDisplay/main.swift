@@ -6,6 +6,20 @@ import Dispatch
 import Foundation
 import VirtualDisplayBridge
 
+enum StartupError: LocalizedError {
+    case adb(String)
+    case tabletResolution
+
+    var errorDescription: String? {
+        switch self {
+        case .adb(let message):
+            return "无法连接平板：\(message)"
+        case .tabletResolution:
+            return "无法读取平板分辨率：请确认平板已连接，或输入平板 IP 后重连。"
+        }
+    }
+}
+
 final class TabletDisplayDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController?
     private var controlPanel: ControlPanelController?
@@ -20,6 +34,14 @@ final class TabletDisplayDelegate: NSObject, NSApplicationDelegate {
             do {
                 try await TabletDisplayApp.run(statusBar: statusBar, controlPanel: controlPanel)
                 await MainActor.run { NSApp.terminate(nil) }
+            } catch let startupError as StartupError {
+                AppLog.write("启动未完成：\(startupError.localizedDescription)")
+                controlPanel.updateStatus("未连接 · 输入平板 IP 或插 USB 后重连", level: .warning)
+                controlPanel.updateDisplay("—")
+                controlPanel.updateTransport("—")
+                controlPanel.updateServer("—")
+                statusBar.update("等待手动连接")
+                await MainActor.run { controlPanel.show() }
             } catch {
                 controlPanel.updateStatus("启动失败", level: .error)
                 AppLog.write("错误：\(error.localizedDescription)")
@@ -75,7 +97,16 @@ struct TabletDisplayApp {
         }
         statusBar.setPort(options.port)
         statusBar.update("正在启动…")
-        let adb = options.noADB ? nil : try ADB.connectPreferred(serial: options.serial)
+        let adb: ADB?
+        if options.noADB {
+            adb = nil
+        } else {
+            do {
+                adb = try ADB.connectPreferred(serial: options.serial)
+            } catch {
+                throw StartupError.adb(error.localizedDescription)
+            }
+        }
         if let adb {
             AppLog.write("ADB 设备：\(adb.serial)")
             controlPanel.updateTablet(adb.serial)
@@ -94,6 +125,12 @@ struct TabletDisplayApp {
         let transport = options.directHost.map { "直连 \($0):\(options.port)" } ?? "ADB 隧道"
         AppLog.write("传输方式：\(transport)")
         controlPanel.updateTransport(transport)
+        if let directHost = options.directHost {
+            controlPanel.updateMacAddress(directHost)
+        } else if let tabletHost = adb.flatMap({ ADB.host(fromSerial: $0.serial) }),
+                  let macIP = LocalNetwork.ipv4(towards: tabletHost) {
+            controlPanel.updateMacAddress(macIP)
+        }
         let peerIP = options.directHost.flatMap { _ in
             adb?.serial.split(separator: ":", maxSplits: 1).first.map(String.init)
         }
@@ -118,7 +155,7 @@ struct TabletDisplayApp {
             width = options.width ?? 1920
             height = options.height ?? 1200
         } else {
-            throw CLIError.invalid("无法检测平板硬件分辨率，请用 --width 和 --height 手动指定")
+            throw StartupError.tabletResolution
         }
         guard (640...4096).contains(width), (480...4096).contains(height) else {
             throw CLIError.invalid("设备分辨率超出支持范围，请用 --width 和 --height 指定分辨率")
