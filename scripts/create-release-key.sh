@@ -1,8 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 
-root="${0:A:h:h}"
-keystore="${1:-$root/build/android/tabletdisplay-release.keystore}"
+keystore="${1:-${TABLETDISPLAY_KEYSTORE:-$HOME/Library/Application Support/TabletDisplay/release.keystore}}"
 alias=tabletdisplay
 storepass="${TABLETDISPLAY_STORE_PASS:-}"
 if [[ -z "$storepass" ]]; then

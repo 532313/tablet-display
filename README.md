@@ -159,7 +159,7 @@ make release    # 构建 app + dist/Tablet Display-0.2.0.dmg
 正式签名/公证：
 
 ```sh
-./scripts/create-release-key.sh      # Android release keystore
+./scripts/create-release-key.sh      # 默认保存到 ~/Library/Application Support/TabletDisplay/release.keystore
 export TABLETDISPLAY_KEYSTORE=...
 export TABLETDISPLAY_KEY_ALIAS=tabletdisplay
 export TABLETDISPLAY_STORE_PASS=...
@@ -170,6 +170,10 @@ export TABLETDISPLAY_SIGN_IDENTITY='Developer ID Application: ...'
 export TABLETDISPLAY_NOTARY_PROFILE=TabletDisplay
 ./scripts/notarize.sh
 ```
+
+Android release keystore 默认保存在项目目录之外，避免清理或提交构建目录时丢失签名身份。请把 keystore 和密码分别备份；重新安装同一应用及后续升级必须继续使用同一签名文件。可通过 `TABLETDISPLAY_KEYSTORE` 或脚本第一个参数指定其他位置。
+
+macOS Developer ID 证书和 notarytool 凭据由开发者自己的 Apple 开发者账户提供；本项目只提供签名、公证脚本，不包含或生成这些凭据。
 
 ## 安全
 
