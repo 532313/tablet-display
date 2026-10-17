@@ -33,10 +33,14 @@ if [[ -n "${TABLETDISPLAY_KEYSTORE:-}" ]]; then
   storepass="${TABLETDISPLAY_STORE_PASS:?请设置 TABLETDISPLAY_STORE_PASS}"
   keypass="${TABLETDISPLAY_KEY_PASS:-$storepass}"
 else
-  keystore="$root/build/android/debug.keystore"
+  # Keep the debug signing identity outside the project so `make clean`
+  # never breaks updates to an already installed APK.
+  debug_dir="$HOME/Library/Application Support/TabletDisplay"
+  keystore="${TABLETDISPLAY_DEBUG_KEYSTORE:-$debug_dir/debug.keystore}"
   alias=tabletdisplay
   storepass=android
   keypass=android
+  mkdir -p "${keystore:h}"
   if [[ ! -f "$keystore" ]]; then
     keytool -genkeypair -keystore "$keystore" -alias "$alias" \
       -keyalg RSA -keysize 2048 -validity 3650 -storepass "$storepass" -keypass "$keypass" \

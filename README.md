@@ -27,6 +27,7 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 - Xcode Command Line Tools。
 - Android SDK：API 34、Build Tools 36.0.0、Platform Tools。
 - JDK：默认使用 Android Studio 的 JBR；如果不是默认安装位置，请设置 `JAVA_HOME`。
+- Android 调试签名 key 默认保存在 `~/Library/Application Support/TabletDisplay/debug.keystore`（不在仓库里），避免清理构建目录时丢失签名身份；可用 `TABLETDISPLAY_DEBUG_KEYSTORE` 覆盖。
 - 平板开启 USB 调试；无线模式要求 Mac 与平板在同一局域网。
 - 首次运行需要授予“屏幕录制”“辅助功能”“本地网络”。
 
@@ -118,7 +119,7 @@ make app        # 构建 Mac app + APK
 make test       # 核心测试
 make run        # 本机运行构建产物
 make icon       # 从 Resources/AppIcon-1024.png 重新生成 icns
-make clean      # 删除编译缓存和构建产物（保留签名 keystore）
+make clean      # 删除编译缓存和构建产物
 ```
 
 项目结构：

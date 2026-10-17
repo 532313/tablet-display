@@ -14,6 +14,12 @@
 - 重新签名再次清空 TCC；屏幕录制与辅助功能重新绑定核心应用后已验证：连续启动无弹窗，1470×956、60fps。
 - 当前运行：PID 2510，启动器 exec 核心应用（1470×956）。
 
+## 00:40 清理目录与签名 key 外置
+
+- Android 调试签名 key 从 `build/android/debug.keystore` 移到 `~/Library/Application Support/TabletDisplay/debug.keystore`，并用它重新构建 APK，确认证书 SHA-256 仍是 `f283a66e…`（与平板已安装版一致）。
+- `build/`、`dist/`、`.build/` 全部清理；DMG 备份到 `~/Library/Application Support/TabletDisplay/Tablet Display-0.2.0.dmg`。
+- 项目只保留源码、资源、脚本、文档、Makefile；`make app` 会按需重建。
+
 ## 00:20 已安装版本与最新构建同步
 
 - 停掉旧实例，备份旧安装到 `build/TabletDisplay-installed-00-02.app`，用 `build/TabletDisplay.app` 替换 `~/Applications/Tablet Display.app`。

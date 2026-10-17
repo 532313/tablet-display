@@ -54,3 +54,4 @@ Mac                                   Android 平板
 - `build/TabletDisplay.app`：开发构建（含 APK 和图标）。
 - `build/TabletDisplay.apk`：Android 接收端。
 - `dist/Tablet Display-<version>.dmg`：发布镜像。
+- `~/Library/Application Support/TabletDisplay/debug.keystore`：Android 调试签名 key，不在仓库内；`TABLETDISPLAY_DEBUG_KEYSTORE` 可覆盖。
