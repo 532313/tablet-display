@@ -1,6 +1,6 @@
 # 传输协议
 
-默认端口 `9137`，HTTP/1.1，明文传输；仅建议在可信局域网使用。
+默认端口 `9137`（HTTP/1.1）；直连模式另有 UDP-RTP `9138`。均为明文传输，仅建议在可信局域网使用。
 
 ## 鉴权
 
@@ -30,6 +30,39 @@ N bytes H.264 Annex-B data
 ```
 
 关键帧包含 SPS/PPS。连接建立后服务端从最近关键帧开始发送。
+
+## UDP-RTP 视频（直连模式）
+
+直连模式下 Mac 额外监听 UDP `9138`，平板优先走 RTP；ADB 隧道或 UDP 失败时回退到 `GET /video`。
+
+平板到 Mac 的控制报文为 UTF-8 文本：
+
+```text
+HELLO <token>
+     鉴权并注册 UDP 源地址
+KEYFRAME
+          请求新的 IDR
+PING
+              每 1 秒心跳，5 秒无心跳服务端停止发送
+```
+
+Mac 到平板的控制报文：
+
+```text
+META <width> <height> <fps>
+
+```
+
+随后是标准 RTP：
+
+- 版本 2，payload type 96
+- 90kHz 时间戳，每个 access unit 一个时间戳
+- marker 位标记一个 access unit 的最后一个 RTP 包
+- SSRC 每次运行随机
+- H.264 单 NAL 或 FU-A（MTU 友好的 1200 字节 payload）
+- 关键帧包含 SPS/PPS
+
+当前 UDP 层没有 FEC/NACK：检测到 RTP 序列号缺口时，平板丢弃损坏帧并请求新 IDR。UDP 握手/首帧超时 2 秒则回退 TCP。token 只做鉴权，不提供加密。
 
 ## `GET /input`
 

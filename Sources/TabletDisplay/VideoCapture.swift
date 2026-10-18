@@ -14,14 +14,27 @@ final class VideoFrameStore {
     private let condition = NSCondition()
     private var frames: [EncodedFrame] = []
     private var sequence: UInt64 = 0
+    private var keyframeRequested = false
+    var onKeyframeNeeded: (() -> Void)?
 
     func append(_ data: Data, keyframe: Bool) {
         condition.lock()
         sequence &+= 1
         frames.append(EncodedFrame(sequence: sequence, data: data, isKeyframe: keyframe))
         if frames.count > 90 { frames.removeFirst(frames.count - 90) }
+        if keyframe { keyframeRequested = false }
         condition.broadcast()
         condition.unlock()
+    }
+
+    /// Ask the encoder for an IDR without polling every frame. The flag is
+    /// cleared when the keyframe actually arrives.
+    func requestKeyframe() {
+        condition.lock()
+        let shouldRequest = !keyframeRequested
+        keyframeRequested = true
+        condition.unlock()
+        if shouldRequest { onKeyframeNeeded?() }
     }
 
     func latestSequence() -> UInt64 {
@@ -99,6 +112,7 @@ final class H264Encoder: @unchecked Sendable {
     private let frames: VideoFrameStore
     private let sessionLock = NSLock()
     private let statsLock = NSLock()
+    private var forceKeyframe = false
     private var statsStart = Date()
     private var submitted = 0
     private var completed = 0
@@ -132,7 +146,9 @@ final class H264Encoder: @unchecked Sendable {
         // Some hardware H.264 encoders do not expose MaxFrameDelayCount.
         try? property(kVTCompressionPropertyKey_MaxFrameDelayCount, NSNumber(value: 1))
         try property(kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_High_AutoLevel)
-        try property(kVTCompressionPropertyKey_MaxKeyFrameInterval, NSNumber(value: max(1, fps / 2)))
+        // Periodic IDRs are expensive bursts on Wi-Fi. Keep only a slow
+        // safety net; new or lagging clients request an immediate IDR instead.
+        try property(kVTCompressionPropertyKey_MaxKeyFrameInterval, NSNumber(value: max(1, fps * 60)))
         try property(kVTCompressionPropertyKey_ExpectedFrameRate, NSNumber(value: fps))
         try property(kVTCompressionPropertyKey_AverageBitRate, NSNumber(value: bitrate))
         let rateLimit = [NSNumber(value: bitrate / 8), NSNumber(value: 1)] as CFArray
@@ -164,11 +180,18 @@ final class H264Encoder: @unchecked Sendable {
             sessionLock.unlock()
             return
         }
+        let frameProperties: CFDictionary?
+        if forceKeyframe {
+            frameProperties = [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary
+            forceKeyframe = false
+        } else {
+            frameProperties = nil
+        }
         var flags = VTEncodeInfoFlags()
         let status = VTCompressionSessionEncodeFrame(
             session, imageBuffer: image,
             presentationTimeStamp: timestamp,
-            duration: .invalid, frameProperties: nil,
+            duration: .invalid, frameProperties: frameProperties,
             sourceFrameRefcon: nil, infoFlagsOut: &flags
         )
         sessionLock.unlock()
@@ -187,6 +210,12 @@ final class H264Encoder: @unchecked Sendable {
             statsStart = Date()
         }
         statsLock.unlock()
+    }
+
+    func requestKeyframe() {
+        sessionLock.lock()
+        forceKeyframe = true
+        sessionLock.unlock()
     }
 
     /// Updates the target bitrate without restarting capture or the encoder.

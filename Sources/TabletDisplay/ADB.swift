@@ -89,10 +89,52 @@ struct ADB {
         return serial.split(separator: ":").first.map(String.init)
     }
 
+    static func restartServer() {
+        logger?("重启 adb server")
+        _ = try? run(["kill-server"])
+        _ = try? run(["start-server"])
+    }
+
+    /// `adb mdns services` can expose Android 11+ wireless-debugging endpoints
+    /// even when the legacy tcpip port is no longer 5555.
+    static func mdnsEndpoints() -> [String] {
+        guard let output = try? run(["mdns", "services"]) else { return [] }
+        return parseMDNSServices(output)
+    }
+
+    static func parseMDNSServices(_ output: String) -> [String] {
+        var endpoints: [String] = []
+        for line in output.split(separator: "\n") where line.contains("_adb") {
+            let fields = line.split(whereSeparator: \.isWhitespace)
+            guard let endpoint = fields.last.map(String.init),
+                  isWireless(endpoint),
+                  !endpoints.contains(endpoint) else { continue }
+            endpoints.append(endpoint)
+        }
+        return endpoints
+    }
+
     /// Prefer an existing wireless transport, then fall back to USB. With a USB
     /// tablet attached, try to switch adbd to TCP and remember the endpoint so
     /// later launches do not need the cable.
     static func connectPreferred(serial requested: String? = nil) throws -> ADB {
+        do {
+            return try connectPreferredOnce(serial: requested)
+        } catch let error as ADBError {
+            switch error {
+            case .notFound, .multipleDevices:
+                throw error
+            case .noDevice, .failed:
+                // A tablet reboot can leave the adb server with a stale route:
+                // the port is reachable, but connect keeps reporting "No route
+                // to host". Restarting the server clears that state.
+                restartServer()
+                return try connectPreferredOnce(serial: requested)
+            }
+        }
+    }
+
+    private static func connectPreferredOnce(serial requested: String?) throws -> ADB {
         let devices = try listDevices()
         if let requested {
             guard devices.contains(where: { $0.serial == requested }) else { throw ADBError.noDevice }
@@ -119,6 +161,12 @@ struct ADB {
         if let saved = savedEndpoint(), let endpoint = try? connectSaved(saved) {
             saveEndpoint(endpoint)
             return ADB(serial: endpoint)
+        }
+        for endpoint in mdnsEndpoints() {
+            if let connected = try? connectSaved(endpoint) {
+                saveEndpoint(connected)
+                return ADB(serial: connected)
+            }
         }
         throw ADBError.noDevice
     }
@@ -159,11 +207,24 @@ struct ADB {
     }
 
     static func connectSaved(_ endpoint: String) throws -> String {
-        _ = try? run(["connect", endpoint])
-        guard (try? run(["-s", endpoint, "get-state"])) == "device" else {
-            throw ADBError.failed("无法连接 \(endpoint)")
+        do {
+            return try connectSavedOnce(endpoint)
+        } catch let error as ADBError {
+            if case .notFound = error { throw error }
+            restartServer()
+            return try connectSavedOnce(endpoint)
         }
-        return endpoint
+    }
+
+    private static func connectSavedOnce(_ endpoint: String) throws -> String {
+        for attempt in 0..<3 {
+            _ = try? run(["connect", endpoint])
+            if (try? run(["-s", endpoint, "get-state"])) == "device" {
+                return endpoint
+            }
+            if attempt < 2 { Thread.sleep(forTimeInterval: 0.5) }
+        }
+        throw ADBError.failed("无法连接 \(endpoint)")
     }
 
     static func savedEndpoint() -> String? {
@@ -190,6 +251,10 @@ struct ADB {
             let wmOutput = try? command(["shell", "wm", "size"])
             if let size = Self.parseScreenSize(displayInfo: displayInfo, wmOutput: wmOutput) {
                 return size
+            }
+            if attempt == 1 {
+                Self.restartServer()
+                _ = try? Self.connectSaved(serial)
             }
             if attempt < 2 { Thread.sleep(forTimeInterval: 0.5) }
         }
@@ -234,9 +299,13 @@ struct ADB {
         _ = try command(["install", "-r", path])
     }
 
-    func openReceiver(host: String, port: UInt16, token: String) throws {
-        _ = try command(["shell", "am", "start", "-S", "-n", "dev.local.tabletdisplay/.MainActivity",
-                         "--es", "host", host, "--ei", "port", String(port), "--es", "token", token])
+    func openReceiver(host: String, port: UInt16, token: String, udpPort: UInt16 = 0) throws {
+        var arguments = ["shell", "am", "start", "-S", "-n", "dev.local.tabletdisplay/.MainActivity",
+                         "--es", "host", host, "--ei", "port", String(port), "--es", "token", token]
+        if udpPort > 0 {
+            arguments += ["--ei", "udpPort", String(udpPort)]
+        }
+        _ = try command(arguments)
     }
 
     func removeForward(port: UInt16) {

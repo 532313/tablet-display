@@ -103,5 +103,22 @@ check(LocalNetwork.selectAddress(towards: "bad", routeInterface: nil,
                                  interfaces: interfaces) == nil,
       "无效目标地址不能匹配任意网卡")
 
+let mdns = """
+List of discovered mdns services
+adb-abc _adb-tls-connect._tcp 192.168.1.51:37123
+printer _ipp._tcp 192.168.1.20:631
+"""
+check(ADB.parseMDNSServices(mdns) == ["192.168.1.51:37123"],
+      "应只提取 adb 的 mDNS 无线调试地址")
+check(ADB.isWireless("192.168.1.51:37123"), "mDNS 返回的地址应被识别为无线 ADB")
+
+let annexB = Data([0, 0, 0, 1, 0x67, 0x42, 0x00, 0x1F,
+                   0, 0, 1, 0x68, 0xCE, 0x3C, 0x80,
+                   0, 0, 0, 1, 0x65, 0x88, 0x84])
+let nals = RTPVideoServer.nalUnits(annexB)
+check(nals.count == 3, "应拆分出 SPS/PPS/IDR 三个 NAL")
+check(nals[0].first == 0x67 && nals[1].first == 0x68 && nals[2].first == 0x65,
+      "应同时支持 4 字节和 3 字节 Annex-B 起始码")
+
 runIntegrationTests()
-print("核心测试通过：尺寸解析、帧队列恢复、采集代次竞态、路由与子网选卡、严格参数解析")
+print("核心测试通过：尺寸解析、帧队列恢复、采集代次竞态、路由与子网选卡、严格参数解析、mDNS 地址解析、RTP NAL 拆分")

@@ -292,12 +292,20 @@ final class HTTPServer: @unchecked Sendable {
             needsKeyframe = false
         } else {
             cursor = frames.latestSequence()
+            frames.requestKeyframe()
         }
         while running() {
-            guard let frame = frames.next(after: cursor, keyframeOnly: needsKeyframe) else { continue }
-            guard sendVideoFrame(fd, frame) else { return }
-            cursor = frame.sequence
-            needsKeyframe = false
+            if let frame = frames.next(after: cursor, keyframeOnly: needsKeyframe,
+                                      timeout: needsKeyframe ? 0.1 : 0.5) {
+                guard sendVideoFrame(fd, frame) else { return }
+                cursor = frame.sequence
+                needsKeyframe = false
+            } else {
+                // The store has no usable IDR (client just connected or
+                // lagged past the GOP). Ask VideoToolbox for one immediately;
+                // the store deduplicates requests until it arrives.
+                frames.requestKeyframe()
+            }
         }
     }
 

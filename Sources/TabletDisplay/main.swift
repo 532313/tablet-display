@@ -203,6 +203,22 @@ struct TabletDisplayApp {
         defer { server.stop() }
         AppLog.write("HTTP 监听：\(options.port)")
         controlPanel.updateServer("127.0.0.1:\(options.port)")
+
+        var udpPort: UInt16 = 0
+        var rtpServer: RTPVideoServer?
+        if options.directHost != nil {
+            let rtp = RTPVideoServer(frames: frames, token: token,
+                                     width: width, height: height, fps: options.fps)
+            do {
+                udpPort = try rtp.start()
+                rtpServer = rtp
+                AppLog.write("RTP 视频端口：\(udpPort)")
+                controlPanel.updateTransport("\(transport) · UDP \(udpPort)")
+            } catch {
+                AppLog.write("UDP 不可用，回退 TCP：\(error.localizedDescription)")
+            }
+        }
+        defer { rtpServer?.stop() }
         print("本机状态：http://127.0.0.1:\(options.port)/health")
         if let host = options.directHost {
             print("视频与触摸通过局域网直连：\(host):\(options.port)（令牌鉴权）")
@@ -213,6 +229,9 @@ struct TabletDisplayApp {
                                       fps: options.fps, frames: frames)
         controlPanel.setBitrateHandler { [weak encoder] mbps in
             encoder?.updateBitrate(mbps * 1_000_000)
+        }
+        frames.onKeyframeNeeded = { [weak encoder] in
+            encoder?.requestKeyframe()
         }
         let capture = DisplayCapture(encoder: encoder)
         try await capture.start(displayID: displayID, width: width, height: height, fps: options.fps)
@@ -226,7 +245,8 @@ struct TabletDisplayApp {
                 throw CLIError.invalid("应用包中缺少 Android 接收端 APK，请重新运行 scripts/build-app.sh")
             }
             try adb.installReceiver(at: apk.path)
-            try adb.openReceiver(host: options.directHost ?? "127.0.0.1", port: options.port, token: token)
+            try adb.openReceiver(host: options.directHost ?? "127.0.0.1", port: options.port,
+                                 token: token, udpPort: udpPort)
             print("已在 Android 设备 \(adb.serial) 打开原生扩展屏。")
             statusBar.update("已连接 \(adb.serial)")
             controlPanel.updateStatus("已连接 \(adb.serial)", level: .running)

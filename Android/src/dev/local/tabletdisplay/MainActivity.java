@@ -7,6 +7,7 @@ import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
@@ -23,9 +24,11 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import java.io.BufferedInputStream;
+import java.io.Closeable;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
@@ -43,7 +46,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private volatile boolean running;
     private Thread videoThread;
     private volatile Socket videoSocket;
+    private volatile DatagramSocket videoUdpSocket;
+    private int udpPort;
     private InputSender inputSender;
+    private WifiManager.WifiLock wifiLock;
     private long lastMoveNs;
     private boolean pointerDown;
     private float lastPointerX = 0.5f;
@@ -76,12 +82,27 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        // Keep the Wi-Fi radio out of power-save while streaming; this
+        // removes periodic 100ms+ latency spikes on some Android devices.
+        try {
+            WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+            if (wifi != null) {
+                int mode = WifiManager.WIFI_MODE_FULL_LOW_LATENCY;
+                wifiLock = wifi.createWifiLock(mode, "TabletDisplay:video");
+                wifiLock.setReferenceCounted(false);
+                wifiLock.acquire();
+            }
+        } catch (SecurityException error) {
+            Log.w(TAG, "Wi-Fi low-latency lock unavailable", error);
+        }
         serverHost = getIntent().getStringExtra("host");
         if (serverHost == null || serverHost.isEmpty()) serverHost = "127.0.0.1";
         serverPort = getIntent().getIntExtra("port", PORT);
         if (serverPort < 1 || serverPort > 65535) serverPort = PORT;
         token = getIntent().getStringExtra("token");
         if (token == null) token = "";
+        udpPort = getIntent().getIntExtra("udpPort", 0);
+        if (udpPort < 1 || udpPort > 65535) udpPort = 0;
         Display display = getWindowManager().getDefaultDisplay();
         float refreshRate = display.getRefreshRate();
         if (refreshRate > 1f && refreshRate < 240f) {
@@ -229,7 +250,15 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (inputSender != null) inputSender.shutdown();
         Socket socket = videoSocket;
         if (socket != null) try { socket.close(); } catch (IOException ignored) {}
+        DatagramSocket udp = videoUdpSocket;
+        if (udp != null) udp.close();
         if (videoThread != null) videoThread.interrupt();
+    }
+
+    @Override protected void onDestroy() {
+        if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
+        wifiLock = null;
+        super.onDestroy();
     }
 
     private void showStatus(String message) {
@@ -237,6 +266,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private void receiveVideo(SurfaceHolder holder) {
+        if (udpPort > 0) {
+            if (receiveUdpVideo(holder)) return;
+            if (!running) return;
+            Log.i(TAG, "UDP 不可用，回退 TCP");
+        }
         int reconnectAttempts = 0;
         while (running) {
             MediaCodec codec = null;
@@ -306,6 +340,70 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         }
     }
 
+    private boolean receiveUdpVideo(SurfaceHolder holder) {
+        final MediaCodec[] codec = new MediaCodec[1];
+        final DecoderOutput[] output = new DecoderOutput[1];
+        RtpVideoReceiver receiver;
+        try {
+            receiver = new RtpVideoReceiver(serverHost, udpPort, token, new RtpVideoReceiver.Listener() {
+                @Override public void onMetadata(int width, int height, int fps) {
+                    videoWidth = width;
+                    videoHeight = height;
+                    videoFps = fps;
+                    runOnUiThread(() -> { if (screen != null) applySurfaceFrameRate(screen.getHolder()); });
+                    Log.i(TAG, "Video UDP " + width + "x" + height + " @" + fps + "fps");
+                }
+
+                @Override public void onFrame(byte[] annexB, boolean keyframe) {
+                    try {
+                        if (codec[0] == null) {
+                            if (!keyframe) return;
+                            codec[0] = configureDecoder(videoWidth, videoHeight, videoFps, annexB, holder);
+                            output[0] = new DecoderOutput(codec[0], videoUdpSocket);
+                            output[0].start();
+                        }
+                        queueFrame(codec[0], output[0], annexB);
+                        synchronized (statsLock) {
+                            statsReceived++;
+                            statsBytes += annexB.length;
+                            statsMaxBufferedBytes = 0;
+                        }
+                        reportStatsIfDue();
+                    } catch (Exception error) {
+                        Log.e(TAG, "UDP decoder", error);
+                        DatagramSocket socket = videoUdpSocket;
+                        if (socket != null) socket.close();
+                    }
+                }
+            });
+        } catch (Exception error) {
+            Log.e(TAG, "UDP setup", error);
+            return false;
+        }
+
+        videoUdpSocket = receiver.socket();
+        resetStats();
+        try {
+            receiver.run();
+            return !running;
+        } catch (Exception error) {
+            if (running) Log.w(TAG, "UDP 视频：" + error.getMessage());
+            return false;
+        } finally {
+            videoUdpSocket = null;
+            receiver.close();
+            if (output[0] != null) {
+                output[0].shutdown();
+                try { output[0].join(); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+            }
+            if (codec[0] != null) {
+                try { codec[0].stop(); } catch (Exception ignored) {}
+                codec[0].release();
+            }
+            videoVisible = false;
+        }
+    }
+
     private static MediaCodec configureDecoder(int width, int height, int fps, byte[] firstFrame, SurfaceHolder holder) throws IOException {
         ArrayList<byte[]> nals = VideoProtocol.splitNals(firstFrame);
         byte[] sps = null, pps = null;
@@ -368,14 +466,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     private final class DecoderOutput extends Thread {
         private final MediaCodec codec;
-        private final Socket socket;
+        private final Closeable transport;
         private volatile boolean active = true;
         private long nextPresentNs;
 
-        DecoderOutput(MediaCodec codec, Socket socket) {
+        DecoderOutput(MediaCodec codec, Closeable transport) {
             super("tablet-display-decoder-output");
             this.codec = codec;
-            this.socket = socket;
+            this.transport = transport;
         }
 
         void shutdown() { active = false; interrupt(); }
@@ -418,7 +516,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             } catch (Exception error) {
                 if (active && running) {
                     Log.e(TAG, "Decoder output", error);
-                    try { socket.close(); } catch (IOException ignored) {}
+                    try { transport.close(); } catch (IOException ignored) {}
                 }
             }
         }

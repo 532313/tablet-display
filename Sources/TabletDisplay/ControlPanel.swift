@@ -210,7 +210,7 @@ private struct ControlPanelView: View {
                     .buttonStyle(.bordered)
                 }
             }
-            Text("留空重连会自动扫描（需 USB）；填写新 IP 会走 ADB 隧道，Mac IP 变化不受影响。")
+            Text("留空重连会自动扫描（需 USB）；填写新 IP 优先直连，无可用路由时走 ADB 隧道。连接失败会自动重启 adb server。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -478,7 +478,9 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
                 await MainActor.run {
                     guard let self else { return }
                     self.model.tabletAddressInput = connected
-                    self.restart(endpoint: connected)
+                    let macIP = ADB.host(fromSerial: connected)
+                        .flatMap { LocalNetwork.ipv4(towards: $0) }
+                    self.restart(endpoint: connected, directHost: macIP)
                 }
             } catch {
                 await MainActor.run {
@@ -490,7 +492,8 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
     }
 
     @MainActor
-    private func restart(endpoint: String? = nil, forceAuto: Bool = false) {
+    private func restart(endpoint: String? = nil, directHost: String? = nil,
+                        forceAuto: Bool = false) {
         guard let executable = Bundle.main.executableURL?.path else { return }
 
         model.status = "正在重启…"
@@ -523,9 +526,12 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
             }
         }
         if let endpoint {
-            // An explicit endpoint without --direct-host forces the ADB
-            // tunnel, so a changed Mac LAN address cannot break the session.
             arguments += ["--serial", endpoint]
+            if let directHost {
+                // Prefer the lower-latency LAN path again after a manual
+                // reconnect; fall back to the ADB tunnel when no route exists.
+                arguments += ["--direct-host", directHost]
+            }
         }
         arguments += [
             "--width", "\(model.width)",
