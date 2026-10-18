@@ -8,6 +8,8 @@
 
 Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采集、VideoToolbox 硬件编码 H.264，通过 Wi-Fi 传给平板；平板用 MediaCodec 硬解全屏显示，并把单点触摸回传成 Mac 鼠标操作。
 
+直连模式优先使用 **UDP-RTP** 传输视频，避免 TCP 队头阻塞；UDP 不可用时自动回退到 TCP `/video`。
+
 当前版本 **0.2.0**，测试设备为华为 WGR-W09（Android 12，2560×1600，60Hz）。
 
 ## 功能
@@ -17,15 +19,54 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 - 硬件编解码：VideoToolbox H.264 + MediaCodec 硬解。
 - 单点触摸：按视频实际显示区域映射，支持黑边。
 - 横屏锁定、断线重连、采集自动重启。
-- token 鉴权 + 平板 IP 白名单。
+- token 鉴权；TCP 直连额外限制平板 IP，UDP 通过 HELLO 中的 token 鉴权。
 - 菜单栏应用、自定义图标、桌面启动器。
 - 启动控制面板：实时状态、分辨率/帧率/码率设置、启动显示/关闭退出开关、保存并重启、权限/日志/状态页/退出。
 - 网络变化恢复：显示本机/平板 IP，支持手动输入平板新 IP 重连；启动时找不到平板不再直接退出。
 - ADB 恢复：连接失败自动重启 adb server，并尝试 `adb mdns services` 发现的无线调试 endpoint。
 - 低延迟：手动重连优先直连；Android 使用 Wi-Fi 低延迟锁；H.264 使用长 GOP + 按需强制关键帧，减少周期性码率突发。
-- UDP-RTP 视频：直连模式优先走 UDP（默认 9138），避免 TCP 队头阻塞；UDP 不可用时自动回退 TCP `/video`；丢包时请求新 IDR。
+- UDP-RTP 视频：直连模式优先走 UDP（默认 9138），H.264 FU-A 分片、RTP 时间戳/标记位、心跳；UDP 不可用时自动回退 TCP `/video`；丢包时请求新 IDR。
 - Android 自适应启动图标，与 macOS 图标使用同一套视觉。
 - 版本化 `.app`、DMG 打包、notarize 脚本。
+
+
+## 传输与延迟
+
+直连模式会根据可用性自动选择视频传输方式：
+
+| 场景 | 视频传输 | 说明 |
+| --- | --- | --- |
+| 直连，UDP 可用 | **UDP-RTP :9138** | 默认路径，避免 TCP 队头阻塞 |
+| 直连，UDP 无法建立 | TCP `/video` :9137 | 自动兜底，功能不中断 |
+| ADB 隧道（`--adb-tunnel`） | TCP `/video` | UDP 不能走 `adb reverse` |
+
+UDP 数据面使用：
+
+- `HELLO <token>` 鉴权并注册平板 UDP 地址
+- `META <width> <height> <fps>` 下发视频参数
+- 标准 RTP/H.264：90kHz 时间戳、marker、SSRC、单 NAL / FU-A 分片
+- `KEYFRAME`：平板发现 RTP 序列号缺口时请求新的 IDR
+- `PING`：1 秒心跳，5 秒无心跳服务端停止发送
+
+协议细节见 [传输协议](docs/PROTOCOL.md)。
+
+### 实测延迟
+
+测试设备：华为 WGR-W09，`1470×956 @60fps / 10Mbps`，Mac 与平板同一 5GHz Wi-Fi：
+
+```text
+UDP-RTP:
+  recv 59.9–60.0 fps
+  output 59.4–60.0 fps
+  outputAge 18.7–20.6ms
+  maxAge 46–82ms（偶发约 110ms）
+
+TCP /video（优化前）:
+  maxAge 70–128ms
+  maxBuffered 54–93KB
+```
+
+`maxAge` 是每 5 秒窗口内的单帧最大延迟，不是平均值。当前 UDP v1 还没有 FEC/NACK；丢包时通过请求新 IDR 恢复，详见[限制](#限制)。
 
 ## 环境要求
 
@@ -36,6 +77,7 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 - Android 调试签名 key 默认保存在 `~/Library/Application Support/TabletDisplay/debug.keystore`（不在仓库里），避免清理构建目录时丢失签名身份；可用 `TABLETDISPLAY_DEBUG_KEYSTORE` 覆盖。
 - 可选：`openssl`（`scripts/create-signing-identity.sh` 用于生成本地稳定签名身份；macOS 自带 LibreSSL 通常可用）。
 - 平板开启 USB 调试；无线模式要求 Mac 与平板在同一局域网。
+- UDP-RTP 使用 9138，TCP 使用 9137；本地防火墙需允许 Tablet Display 的局域网入站连接。
 - 首次运行需要授予“屏幕录制”“辅助功能”“本地网络”。
 
 ## 安装
@@ -93,7 +135,7 @@ make wireless
 
 - 双击 `~/Desktop/Tablet Display 启动器.app`，或从 `~/Applications` 打开 **Tablet Display**。
 - 启动后会显示控制面板：可查看虚拟屏/传输/平板状态，设置分辨率/帧率/码率，切换启动显示与关闭退出行为，打开权限设置、状态页、日志或退出。
-- 网络变化时：把平板新 IP 填入“平板 IP”并点“重新连接”；留空则重新自动扫描（需要插 USB）。有可用局域网路由时优先直连，否则回退到 ADB 隧道。
+- 网络变化时：把平板新 IP 填入“平板 IP”并点“重新连接”；留空则重新自动扫描（需要插 USB）。有可用局域网路由时优先直连并启用 UDP-RTP，否则回退到 ADB 隧道 + TCP。
 - 码率即时生效；分辨率和帧率保存后点“保存并重启”生效，桌面启动器下次也会沿用保存值。
 - 默认关闭控制面板后应用仍在菜单栏运行；菜单栏 **Tablet Display → 打开控制面板** 可重新显示。也可在设置中勾选“关闭窗口时退出应用”。
 - 终端启动：`./scripts/run-wireless.sh`；USB/ADB 隧道：`./scripts/run-wireless.sh --adb-tunnel`。
@@ -105,7 +147,7 @@ make wireless
 ### 分辨率与 UI 大小
 
 - 核心应用默认读取 `wm size` 的 **Physical size**（当前 2560×1600）。
-- 桌面启动器默认传 `--width 1470 --height 956`，让 UI 尺寸与 13 寸 MacBook 一致；平板放大显示，文字会略软。
+- 桌面启动器首次默认使用 `1470×956`，让 UI 尺寸与 13 寸 MacBook 一致；之后会读取控制面板保存的分辨率/帧率/码率。平板放大显示，文字会略软。
 - macOS 27 的 `CGVirtualDisplay` 实测不提供 2x/HiDPI 模式，无法同时做到原生像素和 Mac 尺寸 UI。
 - 想要更清晰：把 `scripts/make-launcher.sh` 里的 `1470×956` 改成 `1920×1200` 或 `2560×1600`；也可以用 `--width/--height` 手动指定。
 
@@ -188,8 +230,8 @@ make clean          # 删除编译缓存和构建产物
 
 `make test` 会依次运行两组测试，不需要连接平板：
 
-- `make test-core`：编译 macOS 核心代码，覆盖尺寸解析、帧队列、采集代次、路由选卡、严格参数校验，并通过本机 socket 验证 `/video` 帧格式与鉴权、`/input` 解析、断连自动释放鼠标、长连接超时隔离、重连和请求超时。
-- `make test-android`：纯 Java 测试 `VideoProtocol` 的 HTTP 头/帧/NAL 解析，以及 `ReconnectPolicy` 的退避策略。
+- `make test-core`：编译 macOS 核心代码，覆盖尺寸解析、帧队列、采集代次、路由选卡、严格参数校验、mDNS 地址解析和 RTP NAL 拆分，并通过本机 socket 验证 `/video` 帧格式与鉴权、`/input` 解析、断连自动释放鼠标、长连接超时隔离、重连和请求超时。
+- `make test-android`：纯 Java 测试 `VideoProtocol` 的 HTTP 头/帧/NAL 解析、`ReconnectPolicy` 的退避策略。UDP-RTP 接收端由 `make apk` / `make app` 编译，实际解码与触摸仍需真机验证。
 
 CI 定义在 [.github/workflows/ci.yml](.github/workflows/ci.yml)：macOS job 构建 Swift 应用并跑 `make test-core`；Ubuntu job 安装 Android SDK 后跑 `make test-android` 并构建 APK。CI 不启动模拟器，MediaCodec 实际解码和触摸注入仍需在真机上验证。
 
@@ -220,7 +262,7 @@ macOS Developer ID 证书和 notarytool 凭据由开发者自己的 Apple 开发
 
 ## 安全
 
-- 视频/触摸是明文 HTTP + token，只建议在可信局域网使用。
+- 视频/触摸是明文 HTTP 或 UDP-RTP，token 只做鉴权、不提供加密，只建议在可信局域网使用。
 - `adb tcpip 5555` 会让调试端口保持开启；不用时可执行 `adb usb`。
 - token 通过 ADB intent 传递，本机 `adb`/`dumpsys` 可见，不是强隔离凭据。
 
@@ -229,6 +271,8 @@ macOS Developer ID 证书和 notarytool 凭据由开发者自己的 Apple 开发
 - 依赖 macOS 私有 `CGVirtualDisplay`，系统更新可能失效。
 - 不支持声音、键盘、多点触控、滚轮/右键、剪贴板。
 - 单平板；无自适应码率、无 HDR/色彩管理。
+- UDP-RTP v1 没有 FEC/NACK；检测到丢包/乱序会丢弃损坏帧并请求新 IDR。
+- UDP 只用于直连模式，ADB 隧道仍使用 TCP。
 - 平板重启后无线 ADB 可能关闭，需要插一次 USB。
 
 ## 许可
