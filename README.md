@@ -26,6 +26,7 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 - ADB 恢复：连接失败自动重启 adb server，并尝试 `adb mdns services` 发现的无线调试 endpoint。
 - 低延迟：手动重连优先直连；Android 使用 Wi-Fi 低延迟锁；H.264 使用长 GOP + 按需强制关键帧，减少周期性码率突发。
 - UDP-RTP 视频：直连模式优先走 UDP（默认 9138），H.264 FU-A 分片、RTP 时间戳/标记位、心跳；UDP 不可用时自动回退 TCP `/video`；丢包时请求新 IDR。
+- 按屏幕拆分声音：窗口中心在平板虚拟屏的进程会被静音并送到平板，窗口留在 Mac 的进程继续从 Mac 输出；按进程路由，约 0.5–1 秒刷新。
 - Android 自适应启动图标，与 macOS 图标使用同一套视觉。
 - 版本化 `.app`、DMG 打包、notarize 脚本。
 
@@ -39,6 +40,7 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 | 直连，UDP 可用 | **UDP-RTP :9138** | 默认路径，避免 TCP 队头阻塞 |
 | 直连，UDP 无法建立 | TCP `/video` :9137 | 自动兜底，功能不中断 |
 | ADB 隧道（`--adb-tunnel`） | TCP `/video` | UDP 不能走 `adb reverse` |
+| 可选音频（直连） | UDP PCM :9139 | 按窗口所在屏幕选中进程，48kHz/stereo/s16le |
 
 UDP 数据面使用：
 
@@ -70,15 +72,15 @@ TCP /video（优化前）:
 
 ## 环境要求
 
-- macOS 13 或更新版本（当前在 macOS 27 / Apple M5 验证）。
+- macOS 13 或更新版本（当前在 macOS 27 / Apple M5 验证）；按窗口拆分音频需要 macOS 14.2+。
 - Xcode Command Line Tools。
 - Android SDK：API 34、Build Tools 36.0.0、Platform Tools。
 - JDK：默认使用 Android Studio 的 JBR；如果不是默认安装位置，请设置 `JAVA_HOME`。
 - Android 调试签名 key 默认保存在 `~/Library/Application Support/TabletDisplay/debug.keystore`（不在仓库里），避免清理构建目录时丢失签名身份；可用 `TABLETDISPLAY_DEBUG_KEYSTORE` 覆盖。
 - 可选：`openssl`（`scripts/create-signing-identity.sh` 用于生成本地稳定签名身份；macOS 自带 LibreSSL 通常可用）。
 - 平板开启 USB 调试；无线模式要求 Mac 与平板在同一局域网。
-- UDP-RTP 使用 9138，TCP 使用 9137；本地防火墙需允许 Tablet Display 的局域网入站连接。
-- 首次运行需要授予“屏幕录制”“辅助功能”“本地网络”。
+- UDP-RTP 使用 9138，音频使用 9139，TCP 使用 9137；本地防火墙需允许 Tablet Display 的局域网入站连接。
+- 首次运行需要授予“屏幕与系统音频录制”“辅助功能”“本地网络”；“屏幕与系统音频录制”权限同时用于系统音频 tap。
 
 ## 安装
 
@@ -134,9 +136,9 @@ make wireless
 ### 日常
 
 - 双击 `~/Desktop/Tablet Display 启动器.app`，或从 `~/Applications` 打开 **Tablet Display**。
-- 启动后会显示控制面板：可查看虚拟屏/传输/平板状态，设置分辨率/帧率/码率，切换启动显示与关闭退出行为，打开权限设置、状态页、日志或退出。
+- 启动后会显示控制面板：可查看虚拟屏/传输/平板状态，设置分辨率/帧率/码率，勾选“平板窗口声音仅平板播放”，切换启动显示与关闭退出行为，打开权限设置、状态页、日志或退出。
 - 网络变化时：把平板新 IP 填入“平板 IP”并点“重新连接”；留空则重新自动扫描（需要插 USB）。有可用局域网路由时优先直连并启用 UDP-RTP，否则回退到 ADB 隧道 + TCP。
-- 码率即时生效；分辨率和帧率保存后点“保存并重启”生效，桌面启动器下次也会沿用保存值。
+- 码率即时生效；分辨率、帧率和音频开关保存后点“保存并重启”生效，桌面启动器下次也会沿用保存值。音频路由每 0.5 秒按窗口位置刷新。
 - 默认关闭控制面板后应用仍在菜单栏运行；菜单栏 **Tablet Display → 打开控制面板** 可重新显示。也可在设置中勾选“关闭窗口时退出应用”。
 - 终端启动：`./scripts/run-wireless.sh`；USB/ADB 隧道：`./scripts/run-wireless.sh --adb-tunnel`。
 
@@ -170,6 +172,7 @@ make wireless
 ./scripts/run.sh --serial 设备序列号
 ./scripts/run.sh --token 固定令牌
 ./scripts/run.sh --hidpi / --no-hidpi
+./scripts/run.sh --audio
 ./scripts/run.sh --no-adb --duration 10
 ./scripts/run-wireless.sh --adb-tunnel
 ```
@@ -183,6 +186,7 @@ make wireless
 | `--direct-host` | 局域网直连的 Mac IP（脚本自动传入） |
 | `--token` | 固定鉴权 token |
 | `--hidpi` / `--no-hidpi` | 强制/禁用 2x 逻辑尺寸（当前虚拟屏驱动不提供 2x 模式） |
+| `--audio` / `--no-audio` | 开启/关闭按窗口所在屏幕拆分音频；需直连、macOS 14.2+，重启生效 |
 | `--adb-tunnel` | 改用 `adb reverse`，视频走 ADB |
 | `--duration` | 运行指定秒数后退出（调试） |
 
@@ -231,7 +235,7 @@ make clean          # 删除编译缓存和构建产物
 `make test` 会依次运行两组测试，不需要连接平板：
 
 - `make test-core`：编译 macOS 核心代码，覆盖尺寸解析、帧队列、采集代次、路由选卡、严格参数校验、mDNS 地址解析和 RTP NAL 拆分，并通过本机 socket 验证 `/video` 帧格式与鉴权、`/input` 解析、断连自动释放鼠标、长连接超时隔离、重连和请求超时。
-- `make test-android`：纯 Java 测试 `VideoProtocol` 的 HTTP 头/帧/NAL 解析、`ReconnectPolicy` 的退避策略。UDP-RTP 接收端由 `make apk` / `make app` 编译，实际解码与触摸仍需真机验证。
+- `make test-android`：纯 Java 测试 `VideoProtocol` 的 HTTP 头/帧/NAL 解析、`ReconnectPolicy` 的退避策略。UDP-RTP/音频接收端由 `make apk` / `make app` 编译，实际解码、触摸和 AudioTrack 仍需真机验证。
 
 CI 定义在 [.github/workflows/ci.yml](.github/workflows/ci.yml)：macOS job 构建 Swift 应用并跑 `make test-core`；Ubuntu job 安装 Android SDK 后跑 `make test-android` 并构建 APK。CI 不启动模拟器，MediaCodec 实际解码和触摸注入仍需在真机上验证。
 
@@ -262,14 +266,17 @@ macOS Developer ID 证书和 notarytool 凭据由开发者自己的 Apple 开发
 
 ## 安全
 
-- 视频/触摸是明文 HTTP 或 UDP-RTP，token 只做鉴权、不提供加密，只建议在可信局域网使用。
+- 视频/触摸/音频是明文 HTTP、UDP-RTP 或 UDP PCM，token 只做鉴权、不提供加密，只建议在可信局域网使用。
 - `adb tcpip 5555` 会让调试端口保持开启；不用时可执行 `adb usb`。
 - token 通过 ADB intent 传递，本机 `adb`/`dumpsys` 可见，不是强隔离凭据。
 
 ## 限制
 
 - 依赖 macOS 私有 `CGVirtualDisplay`，系统更新可能失效。
-- 不支持声音、键盘、多点触控、滚轮/右键、剪贴板。
+- 音频按进程而不是单个窗口路由：同一应用只要有一个窗口在平板上，它的所有声音都会去平板；窗口在 Mac 上时不会送到平板。
+- 没有窗口的音频（例如纯后台播放器）默认留在 Mac；受 DRM 保护的音频可能无法采集。
+- 音频仅支持直连模式，走未压缩 PCM（48kHz/stereo/s16le，约 1.5Mbps）；不支持音量独立控制/多声道/音频回传。
+- 不支持键盘、多点触控、滚轮/右键、剪贴板。
 - 单平板；无自适应码率、无 HDR/色彩管理。
 - UDP-RTP v1 没有 FEC/NACK；检测到丢包/乱序会丢弃损坏帧并请求新 IDR。
 - UDP 只用于直连模式，ADB 隧道仍使用 TCP。

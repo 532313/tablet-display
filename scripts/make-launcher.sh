@@ -53,8 +53,11 @@ width=$(read_int TabletDisplayWidth 1470 640 4096)
 height=$(read_int TabletDisplayHeight 956 480 4096)
 fps=$(read_int TabletDisplayFPS 60 15 60)
 bitrate=$(read_int TabletDisplayBitrateMbps 20 5 50)
-exec "$core/Contents/MacOS/TabletDisplay" --width "$width" --height "$height" \
-  --fps "$fps" --bitrate "$bitrate" --no-hidpi
+audio=$(/usr/bin/defaults read "$domain" TabletDisplayAudio 2>/dev/null || true)
+audio_args=(--no-audio)
+[[ "$audio" == "1" ]] && audio_args=(--audio)
+exec "$core/Contents/MacOS/TabletDisplay" "${audio_args[@]}" \
+  --width "$width" --height "$height" --fps "$fps" --bitrate "$bitrate" --no-hidpi
 SH
 chmod +x "$launcher/Contents/MacOS/TabletDisplayLauncher"
 codesign --force --sign - "$launcher" >/dev/null 2>&1 || true

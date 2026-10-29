@@ -212,17 +212,18 @@ struct ADB {
         } catch let error as ADBError {
             if case .notFound = error { throw error }
             restartServer()
+            Thread.sleep(forTimeInterval: 1.0)
             return try connectSavedOnce(endpoint)
         }
     }
 
     private static func connectSavedOnce(_ endpoint: String) throws -> String {
-        for attempt in 0..<3 {
+        for attempt in 0..<6 {
             _ = try? run(["connect", endpoint])
             if (try? run(["-s", endpoint, "get-state"])) == "device" {
                 return endpoint
             }
-            if attempt < 2 { Thread.sleep(forTimeInterval: 0.5) }
+            if attempt < 5 { Thread.sleep(forTimeInterval: 0.5) }
         }
         throw ADBError.failed("无法连接 \(endpoint)")
     }
@@ -246,17 +247,21 @@ struct ADB {
         // reports the current logical size after rotation, matching screenshots.
         // A just-connected wireless transport can briefly report offline, so
         // retry before failing startup.
-        for attempt in 0..<3 {
+        var restartedServer = false
+        for attempt in 0..<16 {
             let displayInfo = try? command(["shell", "dumpsys", "display"])
             let wmOutput = try? command(["shell", "wm", "size"])
             if let size = Self.parseScreenSize(displayInfo: displayInfo, wmOutput: wmOutput) {
                 return size
             }
-            if attempt == 1 {
+            if attempt == 5, !restartedServer, Self.isWireless(serial) {
+                restartedServer = true
+                AppLog.write("ADB shell 持续未就绪，重启 server 并重连")
                 Self.restartServer()
-                _ = try? Self.connectSaved(serial)
+                Thread.sleep(forTimeInterval: 1.5)
+                _ = try? Self.connectSavedOnce(serial)
             }
-            if attempt < 2 { Thread.sleep(forTimeInterval: 0.5) }
+            if attempt < 15 { Thread.sleep(forTimeInterval: 0.5) }
         }
         return nil
     }
@@ -299,11 +304,15 @@ struct ADB {
         _ = try command(["install", "-r", path])
     }
 
-    func openReceiver(host: String, port: UInt16, token: String, udpPort: UInt16 = 0) throws {
+    func openReceiver(host: String, port: UInt16, token: String,
+                      udpPort: UInt16 = 0, audioPort: UInt16 = 0) throws {
         var arguments = ["shell", "am", "start", "-S", "-n", "dev.local.tabletdisplay/.MainActivity",
                          "--es", "host", host, "--ei", "port", String(port), "--es", "token", token]
         if udpPort > 0 {
             arguments += ["--ei", "udpPort", String(udpPort)]
+        }
+        if audioPort > 0 {
+            arguments += ["--ei", "audioPort", String(audioPort)]
         }
         _ = try command(arguments)
     }

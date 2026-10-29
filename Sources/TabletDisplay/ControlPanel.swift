@@ -51,6 +51,11 @@ final class ControlPanelModel: ObservableObject {
             UserDefaults.standard.set(quitOnWindowClose, forKey: "TabletDisplayQuitOnWindowClose")
         }
     }
+    @Published var audioEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(audioEnabled, forKey: "TabletDisplayAudio")
+        }
+    }
 
     let resolutionOptions: [ResolutionOption]
     let fpsOptions: [Int]
@@ -111,6 +116,7 @@ final class ControlPanelModel: ObservableObject {
         self.port = port
         showWindowOnLaunch = defaults.object(forKey: "TabletDisplayShowWindow") as? Bool ?? true
         quitOnWindowClose = defaults.object(forKey: "TabletDisplayQuitOnWindowClose") as? Bool ?? false
+        audioEnabled = defaults.object(forKey: "TabletDisplayAudio") as? Bool ?? false
         version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.0"
     }
 
@@ -273,10 +279,15 @@ private struct ControlPanelView: View {
                     Toggle("关闭窗口时退出应用", isOn: $model.quitOnWindowClose)
                         .toggleStyle(.checkbox)
                 }
+                GridRow {
+                    detailLabel("")
+                    Toggle("平板窗口声音仅平板播放", isOn: $model.audioEnabled)
+                        .toggleStyle(.checkbox)
+                }
             }
 
             HStack(spacing: 8) {
-                Text("分辨率/帧率保存后需重启；码率立即生效。")
+                Text("分辨率/帧率/音频保存后需重启；码率立即生效。音频按窗口所在屏幕拆分，需直连和 macOS 14.2+。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -343,8 +354,8 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
         window.delegate = self
-        window.setFrameAutosaveName("TabletDisplayControlPanelV2")
-        window.setContentSize(NSSize(width: 480, height: 800))
+        window.setFrameAutosaveName("TabletDisplayControlPanelV3")
+        window.setContentSize(NSSize(width: 480, height: 840))
         window.center()
 
         model.onRestart = { [weak self] in
@@ -494,7 +505,7 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
     @MainActor
     private func restart(endpoint: String? = nil, directHost: String? = nil,
                         forceAuto: Bool = false) {
-        guard let executable = Bundle.main.executableURL?.path else { return }
+        let bundle = Bundle.main.bundleURL.path
 
         model.status = "正在重启…"
         model.statusLevel = .starting
@@ -520,6 +531,9 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
             if argument == "--hidpi" || argument == "--no-hidpi" {
                 continue
             }
+            if argument == "--audio" || argument == "--no-audio" {
+                continue
+            }
             arguments.append(argument)
             if passthroughValueOptions.contains(argument), let value = iterator.next() {
                 arguments.append(value)
@@ -533,6 +547,7 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
                 arguments += ["--direct-host", directHost]
             }
         }
+        arguments += [model.audioEnabled ? "--audio" : "--no-audio"]
         arguments += [
             "--width", "\(model.width)",
             "--height", "\(model.height)",
@@ -542,9 +557,14 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
         ]
 
         let pid = ProcessInfo.processInfo.processIdentifier
+        // Launch through LaunchServices instead of exec'ing the binary from the
+        // dying app. This matches a normal Finder/launcher start and avoids the
+        // short ADB transport race seen after an in-process restart.
         let command = "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; " +
-            "sleep 0.5; exec \(Self.shellQuote(executable)) " +
+            "sleep 2.0; exec /usr/bin/open -n -a \(Self.shellQuote(bundle)) --args " +
             arguments.map { Self.shellQuote($0) }.joined(separator: " ")
+
+        AppLog.write("重启命令：\(command)")
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")

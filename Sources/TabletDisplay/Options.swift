@@ -3,7 +3,9 @@ import Foundation
 
 struct Options {
     var width: Int?
+    var widthExplicit = false
     var height: Int?
+    var heightExplicit = false
     var port: UInt16 = 9137
     var serial: String?
     var noADB = false
@@ -11,9 +13,12 @@ struct Options {
     var bitrateMbps = 20
     var bitrateExplicit = false
     var fps = 60
+    var fpsExplicit = false
     var directHost: String?
     var token: String?
     var hidpi: Bool?
+    var audio = false
+    var audioExplicit = false
 
     static func parse(_ args: [String]) throws -> Options {
         var options = Options()
@@ -28,8 +33,10 @@ struct Options {
                 switch arg {
                 case "--width":
                     options.width = try integer(value, option: arg, range: 640...4096)
+                    options.widthExplicit = true
                 case "--height":
                     options.height = try integer(value, option: arg, range: 480...4096)
+                    options.heightExplicit = true
                 case "--port":
                     let parsed = try integer(value, option: arg, range: 1...65535)
                     guard let port = UInt16(exactly: parsed) else {
@@ -49,6 +56,7 @@ struct Options {
                     options.bitrateExplicit = true
                 case "--fps":
                     options.fps = try integer(value, option: arg, range: 15...60)
+                    options.fpsExplicit = true
                 case "--direct-host":
                     guard isIPv4(value) else {
                         throw CLIError.invalid("--direct-host 必须是 IPv4 地址，例如 192.168.1.10")
@@ -62,12 +70,18 @@ struct Options {
                 }
             case "--no-adb":
                 options.noADB = true
+            case "--audio":
+                options.audio = true
+                options.audioExplicit = true
+            case "--no-audio":
+                options.audio = false
+                options.audioExplicit = true
             case "--hidpi":
                 options.hidpi = true
             case "--no-hidpi":
                 options.hidpi = false
             case "--help", "-h":
-                print("用法: TabletDisplay [--width 2560 --height 1600] [--fps 60] [--bitrate 20] [--port 9137] [--serial 设备号] [--direct-host Mac局域网IP] [--token 令牌] [--hidpi|--no-hidpi] [--no-adb] [--duration 秒]")
+                print("用法: TabletDisplay [--width 2560 --height 1600] [--fps 60] [--bitrate 20] [--port 9137] [--serial 设备号] [--direct-host Mac局域网IP] [--token 令牌] [--hidpi|--no-hidpi] [--audio|--no-audio] [--no-adb] [--duration 秒]")
                 Foundation.exit(0)
             default:
                 throw CLIError.invalid("未知参数 \(arg)")

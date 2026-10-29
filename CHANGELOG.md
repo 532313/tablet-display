@@ -16,6 +16,8 @@
 - ADB 恢复：连接失败时自动重启 adb server 并重试，兼容 Android 11+ 无线调试的 mDNS endpoint。
 - 延迟优化：手动重连优先直连；Android 获取 Wi-Fi 低延迟锁；H.264 改为长 GOP，并在新客户端/落后时按需强制关键帧，减少周期突发。
 - UDP-RTP：直连时视频优先走 UDP 9138，H.264 FU-A 分片、RTP 时间戳/标记位、心跳与丢包 IDR 请求；UDP 失败自动回退 TCP。
+- 按屏幕拆分音频：控制面板新增“平板窗口声音仅平板播放”；使用 Core Audio 进程 tap，按窗口中心所在显示器选择进程，平板窗口音频静音并送平板，Mac 窗口音频保持本机；PCM 经 UDP 9139，Android AudioTrack 播放。
+- 重启/重连修复：不再在读取分辨率失败时过早重启 ADB server；重启改用 LaunchServices 并等待旧进程退出；ADB shell 持续未就绪时自动重启 server 并重连；重启丢失命令行参数时回退已保存的分辨率/帧率/音频设置。
 
 ## 0.2.0 — 2026-10-18
 

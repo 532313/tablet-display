@@ -75,8 +75,32 @@ struct TabletDisplayApp {
 
     static func run(statusBar: StatusBarController, controlPanel: ControlPanelController) async throws {
         var options = try Options.parse(Array(CommandLine.arguments.dropFirst()))
+        let defaults = UserDefaults.standard
+        if !options.widthExplicit,
+           let saved = defaults.object(forKey: "TabletDisplayWidth") as? Int,
+           (640...4096).contains(saved) {
+            options.width = saved
+            AppLog.write("使用保存的宽度：\(saved)")
+        }
+        if !options.heightExplicit,
+           let saved = defaults.object(forKey: "TabletDisplayHeight") as? Int,
+           (480...4096).contains(saved) {
+            options.height = saved
+            AppLog.write("使用保存的高度：\(saved)")
+        }
+        if !options.fpsExplicit,
+           let saved = defaults.object(forKey: "TabletDisplayFPS") as? Int,
+           (15...60).contains(saved) {
+            options.fps = saved
+            AppLog.write("使用保存的帧率：\(saved)")
+        }
+        if !options.audioExplicit,
+           let saved = defaults.object(forKey: "TabletDisplayAudio") as? Bool {
+            options.audio = saved
+            AppLog.write("使用保存的音频设置：\(saved)")
+        }
         if !options.bitrateExplicit,
-           let saved = UserDefaults.standard.object(forKey: "TabletDisplayBitrateMbps") as? Int,
+           let saved = defaults.object(forKey: "TabletDisplayBitrateMbps") as? Int,
            (5...50).contains(saved) {
             options.bitrateMbps = saved
             AppLog.write("使用保存的码率：\(saved) Mbps")
@@ -219,6 +243,36 @@ struct TabletDisplayApp {
             }
         }
         defer { rtpServer?.stop() }
+
+        var audioPort: UInt16 = 0
+        var audioServer: AudioStreamServer?
+        var audioRouter: (any DisplayAudioRouting)?
+        if options.audio, options.directHost != nil {
+            if #available(macOS 14.2, *) {
+                let audio = AudioStreamServer(token: token)
+                do {
+                    audioPort = try audio.start()
+                    audioServer = audio
+                    AppLog.write("音频 UDP 端口：\(audioPort)")
+                    let router = DisplayAudioRouter(displayID: displayID,
+                                                    sink: { pcm in audio.append(pcm) },
+                                                    sinkReady: { audio.hasPeer() })
+                    router.start()
+                    audioRouter = router
+                    AppLog.write("按窗口所在显示器拆分音频")
+                } catch {
+                    AppLog.write("音频不可用：\(error.localizedDescription)")
+                }
+            } else {
+                AppLog.write("音频拆分需要 macOS 14.2 或更新版本")
+            }
+        } else if options.audio {
+            AppLog.write("音频需要直连模式，当前不会传输声音")
+        }
+        defer {
+            audioRouter?.stop()
+            audioServer?.stop()
+        }
         print("本机状态：http://127.0.0.1:\(options.port)/health")
         if let host = options.directHost {
             print("视频与触摸通过局域网直连：\(host):\(options.port)（令牌鉴权）")
@@ -246,7 +300,7 @@ struct TabletDisplayApp {
             }
             try adb.installReceiver(at: apk.path)
             try adb.openReceiver(host: options.directHost ?? "127.0.0.1", port: options.port,
-                                 token: token, udpPort: udpPort)
+                                 token: token, udpPort: udpPort, audioPort: audioPort)
             print("已在 Android 设备 \(adb.serial) 打开原生扩展屏。")
             statusBar.update("已连接 \(adb.serial)")
             controlPanel.updateStatus("已连接 \(adb.serial)", level: .running)

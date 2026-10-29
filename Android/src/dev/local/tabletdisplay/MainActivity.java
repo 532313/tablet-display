@@ -48,6 +48,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private volatile Socket videoSocket;
     private volatile DatagramSocket videoUdpSocket;
     private int udpPort;
+    private int audioPort;
+    private AudioReceiver audioReceiver;
     private InputSender inputSender;
     private WifiManager.WifiLock wifiLock;
     private long lastMoveNs;
@@ -103,6 +105,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (token == null) token = "";
         udpPort = getIntent().getIntExtra("udpPort", 0);
         if (udpPort < 1 || udpPort > 65535) udpPort = 0;
+        audioPort = getIntent().getIntExtra("audioPort", 0);
+        if (audioPort < 1 || audioPort > 65535) audioPort = 0;
         Display display = getWindowManager().getDefaultDisplay();
         float refreshRate = display.getRefreshRate();
         if (refreshRate > 1f && refreshRate < 240f) {
@@ -220,6 +224,14 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         applySurfaceFrameRate(holder);
         inputSender = new InputSender();
         inputSender.start();
+        if (audioPort > 0) {
+            try {
+                audioReceiver = new AudioReceiver(serverHost, audioPort, token);
+                audioReceiver.start();
+            } catch (Exception error) {
+                Log.w(TAG, "Audio setup", error);
+            }
+        }
         videoThread = new Thread(() -> receiveVideo(holder), "tablet-display-video");
         videoThread.start();
     }
@@ -248,6 +260,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             vsyncScheduled = false;
         }
         if (inputSender != null) inputSender.shutdown();
+        if (audioReceiver != null) {
+            audioReceiver.close();
+            audioReceiver = null;
+        }
         Socket socket = videoSocket;
         if (socket != null) try { socket.close(); } catch (IOException ignored) {}
         DatagramSocket udp = videoUdpSocket;
@@ -256,6 +272,10 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     @Override protected void onDestroy() {
+        if (audioReceiver != null) {
+            audioReceiver.close();
+            audioReceiver = null;
+        }
         if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
         wifiLock = null;
         super.onDestroy();
