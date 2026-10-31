@@ -136,6 +136,39 @@ private func testInputAndDisconnectRelease() throws {
     check(afterDrop[4].phase == "up", "断连释放事件应为 up")
 }
 
+private func testTouchDisabledGate() throws {
+    let recorder = PointerRecorder()
+    let server = HTTPServer(frames: VideoFrameStore(), displayID: 0, width: 640, height: 480,
+                            fps: 60, token: "test-token",
+                            pointerHandler: { recorder.append($0) })
+    try server.start(port: 0)
+    defer { server.stop() }
+
+    let socket = try TestSocket(port: server.boundPort)
+    defer { socket.close() }
+    try socket.send(request("/input", token: "test-token"))
+    _ = try socket.readUntil(Data("\r\n\r\n".utf8))
+
+    try socket.send(pointerPacket(1, x: 0.25, y: 0.75))
+    _ = recorder.waitForCount(1)
+
+    server.setTouchEnabled(false)
+    guard let released = recorder.waitForCount(2) else {
+        preconditionFailure("禁用触摸时应补发 up")
+    }
+    check(released[1].phase == "up", "禁用触摸应释放按下的鼠标")
+
+    try socket.send(pointerPacket(2, x: 0.5, y: 0.5))
+    check(recorder.waitForCount(3, timeout: 0.3) == nil, "禁用触摸后应忽略拖动")
+
+    server.setTouchEnabled(true)
+    try socket.send(pointerPacket(1, x: 0.4, y: 0.6))
+    guard let resumed = recorder.waitForCount(3) else {
+        preconditionFailure("重新启用触摸后应恢复事件")
+    }
+    check(resumed[2].phase == "down", "重新启用后应收到新的 down")
+}
+
 private func testInputIdleAfterRequest() throws {
     let recorder = PointerRecorder()
     let store = VideoFrameStore()
@@ -206,10 +239,11 @@ func runIntegrationTests() {
     do {
         try testVideoFrames()
         try testInputAndDisconnectRelease()
+        try testTouchDisabledGate()
         try testInputIdleAfterRequest()
         try testReconnect()
         try testRequestTimeout()
-        print("集成测试通过：/video 帧格式与鉴权、/input 解析、断连释放、长连接超时隔离、重连、请求超时")
+        print("集成测试通过：/video 帧格式与鉴权、/input 解析、触摸开关、断连释放、长连接超时隔离、重连、请求超时")
     } catch {
         preconditionFailure("集成测试失败：\(error)")
     }

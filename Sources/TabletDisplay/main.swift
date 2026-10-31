@@ -223,6 +223,11 @@ struct TabletDisplayApp {
         let token = options.token ?? UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let server = HTTPServer(frames: frames, displayID: displayID, width: width, height: height,
                                 fps: options.fps, token: token, directPeerIP: peerIP)
+        let touchEnabled = UserDefaults.standard.object(forKey: "TabletDisplayTouchEnabled") as? Bool ?? true
+        server.setTouchEnabled(touchEnabled)
+        controlPanel.setTouchHandler { [weak server] enabled in
+            server?.setTouchEnabled(enabled)
+        }
         try server.start(port: options.port)
         defer { server.stop() }
         AppLog.write("HTTP 监听：\(options.port)")

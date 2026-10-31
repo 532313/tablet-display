@@ -33,6 +33,11 @@ final class HTTPServer: @unchecked Sendable {
     private var listener: Int32 = -1
     private var clients: Set<Int32> = []
     private let stateLock = NSLock()
+    private let touchLock = NSLock()
+    private var touchEnabled = true
+    private var pointerIsDown = false
+    private var pointerX = 0.5
+    private var pointerY = 0.5
     private var isRunning = false
     private(set) var boundPort: UInt16 = 0
 
@@ -55,6 +60,17 @@ final class HTTPServer: @unchecked Sendable {
         } else {
             self.directPeer = nil
         }
+    }
+
+    func setTouchEnabled(_ enabled: Bool) {
+        touchLock.lock()
+        let release = !enabled && pointerIsDown
+        let x = pointerX
+        let y = pointerY
+        if !enabled { pointerIsDown = false }
+        touchEnabled = enabled
+        touchLock.unlock()
+        if release { inject(PointerMessage(x: x, y: y, phase: "up")) }
     }
 
     func start(port: UInt16) throws {
@@ -318,17 +334,10 @@ final class HTTPServer: @unchecked Sendable {
 
     private func streamInput(_ fd: Int32) {
         guard sendAll(fd, Data("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\n\r\n".utf8)) else { return }
-        var isDown = false
-        var lastX = 0.5
-        var lastY = 0.5
-        // If the tablet disappears or the app goes to the background while
-        // the user is dragging, release the mouse instead of leaving the Mac
+        // If the tablet disappears, the app goes to the background, or touch is
+        // disabled while dragging, release the mouse instead of leaving the Mac
         // stuck in a mouse-down state.
-        defer {
-            if isDown {
-                inject(PointerMessage(x: lastX, y: lastY, phase: "up"))
-            }
-        }
+        defer { releasePointerIfDown() }
         while running() {
             guard let packet = receiveExactly(fd, count: 9) else { return }
             let xBits = packet[1..<5].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
@@ -344,18 +353,45 @@ final class HTTPServer: @unchecked Sendable {
             let x = Double(Float(bitPattern: xBits))
             let y = Double(Float(bitPattern: yBits))
             guard x.isFinite, y.isFinite, (0...1).contains(x), (0...1).contains(y) else { continue }
-            switch phase {
-            case "down", "drag":
-                isDown = true
-                lastX = x
-                lastY = y
-            case "up":
-                isDown = false
-            default:
-                break
-            }
+            guard updatePointer(phase: phase, x: x, y: y) else { continue }
             inject(PointerMessage(x: x, y: y, phase: phase))
         }
+    }
+
+    private func updatePointer(phase: String, x: Double, y: Double) -> Bool {
+        touchLock.lock()
+        defer { touchLock.unlock() }
+        guard touchEnabled else {
+            pointerIsDown = false
+            return false
+        }
+        switch phase {
+        case "down", "drag":
+            pointerIsDown = true
+            pointerX = x
+            pointerY = y
+        case "move":
+            pointerX = x
+            pointerY = y
+        case "up":
+            pointerIsDown = false
+        default:
+            break
+        }
+        return true
+    }
+
+    private func releasePointerIfDown() {
+        touchLock.lock()
+        guard pointerIsDown else {
+            touchLock.unlock()
+            return
+        }
+        pointerIsDown = false
+        let x = pointerX
+        let y = pointerY
+        touchLock.unlock()
+        inject(PointerMessage(x: x, y: y, phase: "up"))
     }
 
     private func receiveExactly(_ fd: Int32, count: Int) -> [UInt8]? {

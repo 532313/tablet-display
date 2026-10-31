@@ -56,6 +56,12 @@ final class ControlPanelModel: ObservableObject {
             UserDefaults.standard.set(audioEnabled, forKey: "TabletDisplayAudio")
         }
     }
+    @Published var touchEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(touchEnabled, forKey: "TabletDisplayTouchEnabled")
+            onTouchChange?(touchEnabled)
+        }
+    }
 
     let resolutionOptions: [ResolutionOption]
     let fpsOptions: [Int]
@@ -65,6 +71,7 @@ final class ControlPanelModel: ObservableObject {
 
     var onBitrateChange: (@Sendable (Int) -> Void)?
     var onRestart: (() -> Void)?
+    var onTouchChange: (@Sendable (Bool) -> Void)?
     var onReconnect: ((String) -> Void)?
     var onQuit: (() -> Void)?
     var onOpenHealth: (() -> Void)?
@@ -80,10 +87,14 @@ final class ControlPanelModel: ObservableObject {
         let height = (480...4096).contains(rawHeight) ? rawHeight : 956
 
         var resolutions = [
-            ResolutionOption(id: "macbook", title: "匹配 MacBook · 1470×956", width: 1470, height: 956),
-            ResolutionOption(id: "wide", title: "1920×1200", width: 1920, height: 1200),
-            ResolutionOption(id: "native", title: "平板原生 · 2560×1600", width: 2560, height: 1600),
-            ResolutionOption(id: "compact", title: "1280×800", width: 1280, height: 800)
+            ResolutionOption(id: "macbook", title: "横屏 · 匹配 MacBook 1470×956", width: 1470, height: 956),
+            ResolutionOption(id: "wide", title: "横屏 · 1920×1200", width: 1920, height: 1200),
+            ResolutionOption(id: "native", title: "横屏 · 平板原生 2560×1600", width: 2560, height: 1600),
+            ResolutionOption(id: "compact", title: "横屏 · 1280×800", width: 1280, height: 800),
+            ResolutionOption(id: "macbook-portrait", title: "竖屏 · 匹配 MacBook 956×1470", width: 956, height: 1470),
+            ResolutionOption(id: "wide-portrait", title: "竖屏 · 1200×1920", width: 1200, height: 1920),
+            ResolutionOption(id: "native-portrait", title: "竖屏 · 平板原生 1600×2560", width: 1600, height: 2560),
+            ResolutionOption(id: "compact-portrait", title: "竖屏 · 800×1280", width: 800, height: 1280)
         ]
         if !resolutions.contains(where: { $0.width == width && $0.height == height }) {
             resolutions.append(ResolutionOption(id: "custom",
@@ -117,6 +128,7 @@ final class ControlPanelModel: ObservableObject {
         showWindowOnLaunch = defaults.object(forKey: "TabletDisplayShowWindow") as? Bool ?? true
         quitOnWindowClose = defaults.object(forKey: "TabletDisplayQuitOnWindowClose") as? Bool ?? false
         audioEnabled = defaults.object(forKey: "TabletDisplayAudio") as? Bool ?? false
+        touchEnabled = defaults.object(forKey: "TabletDisplayTouchEnabled") as? Bool ?? true
         version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.0"
     }
 
@@ -284,10 +296,15 @@ private struct ControlPanelView: View {
                     Toggle("平板窗口声音仅平板播放", isOn: $model.audioEnabled)
                         .toggleStyle(.checkbox)
                 }
+                GridRow {
+                    detailLabel("")
+                    Toggle("允许平板触摸", isOn: $model.touchEnabled)
+                        .toggleStyle(.checkbox)
+                }
             }
 
             HStack(spacing: 8) {
-                Text("分辨率/帧率/音频保存后需重启；码率立即生效。音频按窗口所在屏幕拆分，需直连和 macOS 14.2+。")
+                Text("分辨率/帧率/音频保存后需重启；码率和触摸开关立即生效。竖屏请先旋转平板。音频按窗口所在屏幕拆分，需直连和 macOS 14.2+。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -354,8 +371,8 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
         window.delegate = self
-        window.setFrameAutosaveName("TabletDisplayControlPanelV3")
-        window.setContentSize(NSSize(width: 480, height: 840))
+        window.setFrameAutosaveName("TabletDisplayControlPanelV4")
+        window.setContentSize(NSSize(width: 480, height: 880))
         window.center()
 
         model.onRestart = { [weak self] in
@@ -445,6 +462,10 @@ final class ControlPanelController: NSObject, NSWindowDelegate {
             self.model.onBitrateChange = handler
             handler(self.model.bitrate)
         }
+    }
+
+    nonisolated func setTouchHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
+        Task { @MainActor [weak self] in self?.model.onTouchChange = handler }
     }
 
     @MainActor
