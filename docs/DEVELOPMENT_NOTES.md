@@ -9,7 +9,7 @@
 - **权限引导**：菜单栏新增“权限设置”（屏幕录制/辅助功能/本地网络）和“打开日志”；屏幕录制缺失时弹窗可直接打开对应系统设置，辅助功能缺失时提示触摸暂不可用。
 - **覆盖安装**：`install-app.sh` 现在覆盖 `~/Applications/Tablet Display.app` 并校验签名；`make-launcher.sh` 会删除旧桌面启动器后重新生成，校验可执行文件和签名，失败时不再被 `|| true` 静默吞掉。
 - **Android 图标**：`Android/res` 新增矢量自适应图标（渐变背景 + 平板/窗口/光标/Wi-Fi 前景）；`build-android.sh` 先用 `aapt2 compile` 编译资源，再用 `-R` 链接进 APK。
-- **控制面板**：新增 `ControlPanel.swift`（SwiftUI + `NSHostingController`），启动时显示；展示虚拟屏/传输/平板/视频服务状态。设置包括分辨率预设、帧率、码率、启动时显示、关闭窗口时退出；码率即时调用 `H264Encoder.updateBitrate`，其余写入 UserDefaults 并通过“保存并重启”应用到新进程。`make-launcher.sh` 生成的启动器会读取同一组 UserDefaults，因此下次双击也会沿用设置。关闭窗口默认仍驻留菜单栏，可从菜单重新打开。网络区域显示本机 IP/平板地址，支持手动输入平板新 IP 后连接并重启；启动时 ADB 或分辨率失败会保留控制面板，不再直接退出。ADB 连接失败时会自动 `kill-server/start-server` 并重试，另支持从 `adb mdns services` 解析 Android 11+ 无线调试端点。延迟方面：手动重连优先直连；Android 持有 `WIFI_MODE_FULL_LOW_LATENCY` 锁；编码器使用 60 秒 GOP，客户端缺失关键帧时通过 `kVTEncodeFrameOptionKey_ForceKeyFrame` 按需请求 IDR。竖屏通过控制面板的 956×1470 / 1200×1920 / 1600×2560 / 800×1280 预设创建竖屏虚拟显示器；Android `screenOrientation` 使用 `fullSensor`，配合 `configChanges` 处理旋转。触摸开关由 `TabletDisplayTouchEnabled` 持久化，控制面板实时更新 `HTTPServer.setTouchEnabled`；关闭时忽略 `/input` 并补发 `up`。直连模式新增 UDP-RTP 数据面（9138），保留 TCP `/video` 兜底。系统音频使用 Core Audio 进程 tap：每 0.5 秒扫描虚拟显示器上的窗口（窗口中心判定），把对应进程及其子进程加入 `CATapDescription`，`muteBehavior = .mutedWhenTapped` 静音原输出，再通过聚合设备 IOProc 转 48kHz/stereo/s16le，经 UDP 9139 发送；Android 使用低延迟 `AudioTrack` 播放。音频按进程路由，仅直连模式、macOS 14.2+、默认关闭。
+- **控制面板**：新增 `ControlPanel.swift`（SwiftUI + `NSHostingController`），启动时显示；展示虚拟屏/传输/平板/视频服务状态。设置包括分辨率预设、帧率、码率、启动时显示、关闭窗口时退出；码率即时调用 `H264Encoder.updateBitrate`，其余写入 UserDefaults 并通过“保存并重启”应用到新进程。`make-launcher.sh` 生成的启动器会读取同一组 UserDefaults，因此下次双击也会沿用设置。关闭窗口默认仍驻留菜单栏和 Dock，可从菜单或 Dock 图标重新打开。网络区域显示本机 IP/平板地址，支持手动输入平板新 IP 后连接并重启；启动时 ADB 或分辨率失败会保留控制面板，不再直接退出。ADB 连接失败时会自动 `kill-server/start-server` 并重试，另支持从 `adb mdns services` 解析 Android 11+ 无线调试端点。延迟方面：手动重连优先直连；Android 持有 `WIFI_MODE_FULL_LOW_LATENCY` 锁；编码器使用 60 秒 GOP，客户端缺失关键帧时通过 `kVTEncodeFrameOptionKey_ForceKeyFrame` 按需请求 IDR。自动横竖屏：Android `screenOrientation` 使用 `fullSensor`，`onConfigurationChanged` 时由 `OrientationReporter` POST `/orientation`；Mac 的 `LiveVideoController` 收到回调后原地创建匹配方向的虚拟显示器、重建采集/编码器，HTTP 发送格式变更帧、RTP 发送新 META，应用/ADB/触摸连接不重启。`LiveVideoController` 每秒检查 `CGDisplayBounds`，若虚拟屏不在主屏右侧则重新调用 `VDPlaceRightOfMain`。触摸开关由 `TabletDisplayTouchEnabled` 持久化，控制面板实时更新 `HTTPServer.setTouchEnabled`；关闭时忽略 `/input` 并补发 `up`。直连模式新增 UDP-RTP 数据面（9138），保留 TCP `/video` 兜底。
 - **测试**：`make test-core` 现在包含本机 socket 集成测试：`/video` 帧格式与 401、`/input` 9 字节包解析、断连自动 `up`、重连从最新关键帧开始、空连接请求超时。`make test-android` 用纯 Java 测 `VideoProtocol` 和 `ReconnectPolicy`。新增 GitHub Actions 两个 job。
 - **验证结果**：`make test` 通过；`./scripts/build-android.sh` 成功生成 APK；`swift build --disable-sandbox -c release` 成功。稳定签名 `Tablet Display Local` 已创建并信任；实测重建 + `make install` 覆盖安装后，屏幕录制/辅助功能授权保留，桌面启动器拉起 1470×956，平板稳定约 60fps。尚未做长时间稳定性/触摸逐点回归。
 - **遗留**：Android `Surface` 销毁/重建仍未 join 旧视频线程，快速前后台切换仍有重复解码线程的竞态风险；`/health` 仍只判断“曾经有帧”；固定码率/无自适应未改。
@@ -18,7 +18,7 @@
 
 - 目标：把已通过 ADB 连接的 Android 平板作为 Mac 无线扩展屏，60fps、低延迟、清晰；Dock 留在主屏。
 - 当前代码版本：0.2.0，APK `versionCode=2`。
-- 当前正在运行：从桌面启动器 exec `~/Applications/Tablet Display.app`（PID 3704），无线 ADB `<tablet-ip>:5555`，局域网直连 `<mac-ip>:9137`，虚拟屏 1470×956（UI 匹配 MacBook）在位，平板接收端约 60fps。
+- 启动方式：桌面启动器通过 LaunchServices `open -n -a` 启动核心 App；运行信息以控制面板和日志为准。
 - 平板：华为 WGR-W09，Android 12/API 31，2560×1600/60Hz，Wi-Fi `<tablet-ip>:5555`；Mac `<mac-ip>`，macOS 27.0.1，Apple M5。
 - 主屏逻辑尺寸 1470×956（2x）；桌面启动器创建 1470×956 虚拟屏（UI 匹配），核心应用直接启动仍默认 2560×1600。
 
@@ -26,7 +26,7 @@
 
 - 给 `~/Applications/Tablet Display.app` 增加 `AppIcon.icns` 和 `CFBundleIconFile`，重新 ad-hoc 签名；`build-app.sh` 已同步，后续构建默认带图标。
 - 重新签名再次清空 TCC；屏幕录制与辅助功能重新绑定核心应用后已验证：连续启动无弹窗，1470×956、60fps。
-- 当前运行：PID 2510，启动器 exec 核心应用（1470×956）。
+- 当前运行信息以日志为准；启动器不再直接 exec 核心二进制。
 
 ## 00:45 增加平板端独立构建/安装
 
@@ -45,7 +45,7 @@
 - 停掉旧实例，备份旧安装到 `build/TabletDisplay-installed-00-02.app`，用 `build/TabletDisplay.app` 替换 `~/Applications/Tablet Display.app`。
 - 安装后的可执行文件 SHA-256 与 `build/TabletDisplay.app` 完全一致（`b7d23d8f…`），版本 0.2.0、图标一致。
 - 替换后 TCC 再次失效；重新绑定屏幕录制和辅助功能到核心应用后，启动无弹窗。
-- 当前运行：PID 3704，启动器传 1470×956，平板约 60fps；`dist/Tablet Display-0.2.0.dmg` 与当前构建同源。
+- 历史验证：启动器传 1470×956，平板约 60fps；运行状态以当前日志为准。
 - 旧安装备份保留在 `build/` 用于回滚，可随时删除。
 
 ## 00:15 项目结构整理
@@ -60,8 +60,8 @@
 
 - 目标：平板 2560×1600 1x 时文字/UI 太小；希望和 13 寸 MacBook（主屏逻辑 1470×956）一致。
 - 实测 macOS 27 的 `CGVirtualDisplay`：`settings.hiDPI=1/2`、mode 1280/2560、maxPixels 2560/5120 都不产生 2x 模式，所有模式 pixel=logical，因此无法做真正的 HiDPI 虚拟屏。
-- 方案：桌面启动器直接 exec 核心应用并传 `--width 1470 --height 956 --no-hidpi`；平板把 1470×956 放大到 2560×1600，UI 尺寸与 MacBook 一致，文字略软。启动器已加 `pgrep` 单实例检查。
-- 关键发现：macOS 27 上 `open --args ...` 不会把参数传给应用（用 `--help` 验证过）；launcher 改为 `exec "$core/Contents/MacOS/TabletDisplay" --width ...` 后参数生效，且屏幕录制 TCC 仍按核心应用生效。
+- 方案：桌面启动器通过 LaunchServices 启动核心应用并传 `--width 1470 --height 956 --no-hidpi`；平板把 1470×956 放大到 2560×1600，UI 尺寸与 MacBook 一致，文字略软。核心 App 另有 flock 单实例锁。
+- 启动器使用 `open -n -a "$core" --args ...` 后，LaunchServices 能正确注册 bundle、Dock 图标和参数；此前直接 exec 会导致 bundle path/ID 缺失。
 - 当前运行：PID 2168，虚拟屏 1470×956，平板 60fps；无辅助功能弹窗。
 - 核心应用直接启动仍默认 2560×1600 原生；桌面启动器是 UI 匹配入口。要用原生清晰画面，把 launcher 参数改成 `--width 2560 --height 1600`。
 
@@ -83,7 +83,7 @@
 ## 23:28 自定义图标
 
 - 图标源：`Resources/AppIcon-1024.png` / `scripts/generate-icon.py`；`Resources/AppIcon.icns` 是构建产物。设计是深蓝圆角底 + 平板双窗口 + 光标 + 无线信号弧。
-- `scripts/make-launcher.sh` 生成 `build/TabletDisplayLauncher.app`（独立 bundle id `dev.local.tabletdisplay.launcher`，LSUIElement），以 `exec` 方式启动核心应用并传入 `--width 1470 --height 956 --no-hidpi`；已安装到 `~/Desktop/Tablet Display 启动器.app`，避免和核心应用同名。
+- `scripts/make-launcher.sh` 生成 `build/TabletDisplayLauncher.app`（独立 bundle id `dev.local.tabletdisplay.launcher`，LSUIElement），通过 LaunchServices 启动核心应用并传入 `--width 1470 --height 956 --no-hidpi`；已安装到 `~/Desktop/Tablet Display 启动器.app`。
 - 启动器不改动已授权的核心应用，因此不需要重新授权屏幕录制；桌面图标可以拖到 Dock。
 - 核心应用 `~/Applications/Tablet Display.app` 也已加入同一图标（`Contents/Resources/AppIcon.icns` + `CFBundleIconFile=AppIcon`），并已重新 ad-hoc 签名；`build-app.sh` 以后会默认带图标。改图标会重置 TCC，屏幕录制和辅助功能已重新授权。
 - 另：如果启动时发现虚拟屏是 1920×1200 而不是 2560×1600，通常是旧实例/残留虚拟屏未清；完全退出应用再通过桌面图标启动一次即可恢复，已验证。
@@ -102,7 +102,7 @@
 - **Finder 环境**：`ADB` 不再依赖 PATH，依次查找 `ADB` 环境变量、PATH、`~/Library/Android/sdk/platform-tools/adb`、`/opt/homebrew/bin/adb`、`/usr/local/bin/adb`。
 - **自动直连**：只有“无 `--serial` 的 Dock 启动”才从无线 serial 推导平板 IP，并用 `getifaddrs` 选同网段 Mac IPv4 作为 `directHost`；显式 `--serial` 保持原有 ADB 隧道语义。
 - **日志**：`~/Library/Logs/TabletDisplay.log`，记录 adb 设备、传输方式、虚拟屏、监听、错误。
-- **权限**：首次启动请求本地网络、屏幕录制、辅助功能。macOS 27 的屏幕录制列表里，ad-hoc 应用可能先出现在底部 “System Audio Recording Only”；必须在主 “Screen & System Audio Recording” 列表用 **+** 添加应用并打开开关，否则 `CGPreflightScreenCaptureAccess()` 一直为 false。
+- **权限**：首次启动请求本地网络、屏幕录制、辅助功能。macOS 27 的屏幕录制列表里，ad-hoc 应用可能先出现在底部；必须在主屏幕录制列表用 **+** 添加应用并打开开关，否则 `CGPreflightScreenCaptureAccess()` 一直为 false。
 - **重建注意**：ad-hoc 签名随构建变化，重新构建/重新安装后 macOS 可能要求重新授权屏幕录制；给最终安装副本授权后不要再重建。
 - **放弃的路径**：`~/Applications/启动副屏.command`/Terminal 启动仍因屏幕录制 TCC 失败（Terminal 的授权没有传递到 app），已删除；不要再用 `.command` 作为主启动方式。
 - **当前运行实例**：`~/Applications/Tablet Display.app`，日志确认 `直连 <mac-ip>`、虚拟屏 2560×1600、采集启动、平板接收端打开。
@@ -169,7 +169,7 @@ adb -s <tablet-ip>:5555 shell "dumpsys SurfaceFlinger --latency 'SurfaceView[dev
 - **release keystore 未实际生成**：只做了语法检查；`create-release-key.sh` 会生成 4096 位 RSA key。
 - **发送超时/采集自动重启未做故障注入**：代码路径已在，但没有模拟拔网/SCStream 中断。
 - **动态画面只测了测试图案**（`/tmp/tablet-pattern`，未入库）；未测真实桌面窗口/视频播放。
-- 音频按进程路由，不支持单个窗口拆分；无窗口/部分 DRM 音频不采集；仅直连 PCM，不支持音量独立控制；仍不支持键盘、多点触控、滚轮/右键；单平板；无自适应码率。
+- 仍不支持键盘、多点触控、滚轮/右键；单平板；无自适应码率。
 - 静止时仍按 60fps 编码，流量约 4–15Mbps；这是为了绕开硬解无输入延迟出帧的权衡。
 - `CGVirtualDisplay` 是私有 API，系统更新可能失效。
 

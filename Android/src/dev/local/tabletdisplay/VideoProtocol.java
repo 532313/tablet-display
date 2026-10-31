@@ -41,12 +41,12 @@ public final class VideoProtocol {
     }
 
     public static Frame readFrame(DataInputStream input) throws IOException {
-        boolean keyframe = input.readUnsignedByte() == 1;
+        int flag = input.readUnsignedByte();
         int length = input.readInt();
         validateFrameLength(length);
         byte[] data = new byte[length];
         input.readFully(data);
-        return new Frame(keyframe, data);
+        return new Frame(flag, data);
     }
 
     public static ArrayList<byte[]> splitNals(byte[] bytes) {
@@ -68,11 +68,15 @@ public final class VideoProtocol {
     }
 
     public static final class Frame {
+        public final int flag;
         public final boolean keyframe;
+        public final boolean formatChange;
         public final byte[] data;
 
-        Frame(boolean keyframe, byte[] data) {
-            this.keyframe = keyframe;
+        Frame(int flag, byte[] data) {
+            this.flag = flag;
+            this.keyframe = flag == 1;
+            this.formatChange = flag == 2;
             this.data = data;
         }
     }

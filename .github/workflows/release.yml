@@ -1,0 +1,86 @@
+name: Notarized Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type notarize to build, sign, notarize and staple the DMG"
+        required: true
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  notarized-macos:
+    if: ${{ inputs.confirm == 'notarize' }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-34" "build-tools;36.0.0"
+
+      - name: Import Developer ID certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          : "${CERT_P12_BASE64:?DEVELOPER_ID_P12_BASE64 secret is required}"
+          : "${CERT_PASSWORD:?DEVELOPER_ID_P12_PASSWORD secret is required}"
+          keychain="$RUNNER_TEMP/tabletdisplay-signing.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security default-keychain -s "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          print -rn -- "$CERT_P12_BASE64" | /usr/bin/base64 -D > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$password" "$keychain" >/dev/null
+          security find-identity -v -p codesigning "$keychain"
+
+      - name: Build and sign app
+        env:
+          IDENTITY: ${{ secrets.DEVELOPER_ID_IDENTITY }}
+        run: |
+          : "${IDENTITY:?DEVELOPER_ID_IDENTITY secret is required}"
+          TABLETDISPLAY_SIGN_IDENTITY="$IDENTITY" make app
+          codesign --force --deep --options runtime --timestamp \
+            --sign "$IDENTITY" build/TabletDisplay.app
+          codesign --verify --deep --strict --verbose=2 build/TabletDisplay.app
+
+      - name: Create DMG
+        run: ./scripts/make-dmg.sh --no-build
+
+      - name: Submit and staple notarization
+        env:
+          APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
+        run: |
+          : "${APPLE_ID:?NOTARY_APPLE_ID secret is required}"
+          : "${TEAM_ID:?NOTARY_TEAM_ID secret is required}"
+          : "${APP_PASSWORD:?NOTARY_APP_PASSWORD secret is required}"
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/TabletDisplay.app/Contents/Info.plist)"
+          dmg="dist/Tablet Display-${version}.dmg"
+          xcrun notarytool submit "$dmg" \
+            --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_PASSWORD" --wait
+          xcrun stapler staple "$dmg"
+          ./scripts/check-release.sh --require-notarized
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TabletDisplay-notarized-arm64
+          path: dist/*.dmg

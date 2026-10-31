@@ -1,14 +1,15 @@
 package dev.local.tabletdisplay;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
-import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.Choreographer;
@@ -48,10 +49,8 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private volatile Socket videoSocket;
     private volatile DatagramSocket videoUdpSocket;
     private int udpPort;
-    private int audioPort;
-    private AudioReceiver audioReceiver;
+    private OrientationReporter orientationReporter;
     private InputSender inputSender;
-    private WifiManager.WifiLock wifiLock;
     private long lastMoveNs;
     private boolean pointerDown;
     private float lastPointerX = 0.5f;
@@ -84,19 +83,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        // Keep the Wi-Fi radio out of power-save while streaming; this
-        // removes periodic 100ms+ latency spikes on some Android devices.
-        try {
-            WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-            if (wifi != null) {
-                int mode = WifiManager.WIFI_MODE_FULL_LOW_LATENCY;
-                wifiLock = wifi.createWifiLock(mode, "TabletDisplay:video");
-                wifiLock.setReferenceCounted(false);
-                wifiLock.acquire();
-            }
-        } catch (SecurityException error) {
-            Log.w(TAG, "Wi-Fi low-latency lock unavailable", error);
-        }
+        TabletDisplayService.start(this);
         serverHost = getIntent().getStringExtra("host");
         if (serverHost == null || serverHost.isEmpty()) serverHost = "127.0.0.1";
         serverPort = getIntent().getIntExtra("port", PORT);
@@ -105,8 +92,9 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         if (token == null) token = "";
         udpPort = getIntent().getIntExtra("udpPort", 0);
         if (udpPort < 1 || udpPort > 65535) udpPort = 0;
-        audioPort = getIntent().getIntExtra("audioPort", 0);
-        if (audioPort < 1 || audioPort > 65535) audioPort = 0;
+        applyPairing(getIntent());
+        orientationReporter = new OrientationReporter(serverHost, serverPort, token, isPortrait());
+        orientationReporter.start();
         Display display = getWindowManager().getDefaultDisplay();
         float refreshRate = display.getRefreshRate();
         if (refreshRate > 1f && refreshRate < 240f) {
@@ -121,7 +109,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         screen.getHolder().addCallback(this);
         root.addView(screen, new FrameLayout.LayoutParams(-1, -1));
         status = new TextView(this);
-        status.setText("正在连接 Mac 扩展屏…");
+        status.setText(getString(R.string.status_connecting));
         status.setTextColor(Color.WHITE);
         status.setTextSize(16);
         status.setBackgroundColor(0x99000000);
@@ -211,6 +199,45 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override public void onConfigurationChanged(Configuration config) {
         super.onConfigurationChanged(config);
         hideSystemUi();
+        if (orientationReporter != null) orientationReporter.update(isPortrait());
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (applyPairing(intent)) recreate();
+    }
+
+    /** Accepts tabletdisplay://pair?host=...&port=...&token=... from a QR code. */
+    private boolean applyPairing(Intent intent) {
+        if (intent == null || intent.getData() == null) return false;
+        Uri data = intent.getData();
+        if (!"tabletdisplay".equals(data.getScheme()) || !"pair".equals(data.getHost())) return false;
+        String host = data.getQueryParameter("host");
+        String port = data.getQueryParameter("port");
+        String qrToken = data.getQueryParameter("token");
+        String udp = data.getQueryParameter("udpPort");
+        if (host == null || host.isEmpty()) return false;
+        serverHost = host;
+        if (port != null) {
+            try {
+                int value = Integer.parseInt(port);
+                if (value > 0 && value <= 65535) serverPort = value;
+            } catch (NumberFormatException ignored) {}
+        }
+        if (qrToken != null) token = qrToken;
+        if (udp != null) {
+            try {
+                int value = Integer.parseInt(udp);
+                if (value > 0 && value <= 65535) udpPort = value; else udpPort = 0;
+            } catch (NumberFormatException ignored) {}
+        }
+        Log.i(TAG, "Pairing link: " + serverHost + ":" + serverPort + " udp=" + udpPort);
+        return true;
+    }
+
+    private boolean isPortrait() {
+        return getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT;
     }
 
     @Override public void surfaceCreated(SurfaceHolder holder) {
@@ -224,14 +251,6 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         applySurfaceFrameRate(holder);
         inputSender = new InputSender();
         inputSender.start();
-        if (audioPort > 0) {
-            try {
-                audioReceiver = new AudioReceiver(serverHost, audioPort, token);
-                audioReceiver.start();
-            } catch (Exception error) {
-                Log.w(TAG, "Audio setup", error);
-            }
-        }
         videoThread = new Thread(() -> receiveVideo(holder), "tablet-display-video");
         videoThread.start();
     }
@@ -260,10 +279,6 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             vsyncScheduled = false;
         }
         if (inputSender != null) inputSender.shutdown();
-        if (audioReceiver != null) {
-            audioReceiver.close();
-            audioReceiver = null;
-        }
         Socket socket = videoSocket;
         if (socket != null) try { socket.close(); } catch (IOException ignored) {}
         DatagramSocket udp = videoUdpSocket;
@@ -272,12 +287,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
 
     @Override protected void onDestroy() {
-        if (audioReceiver != null) {
-            audioReceiver.close();
-            audioReceiver = null;
+        if (orientationReporter != null) {
+            orientationReporter.close();
+            orientationReporter = null;
         }
-        if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
-        wifiLock = null;
+        TabletDisplayService.stop(this);
         super.onDestroy();
     }
 
@@ -324,6 +338,33 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 reconnectAttempts = 0;
                 while (running) {
                     VideoProtocol.Frame frame = VideoProtocol.readFrame(input);
+                    if (frame.formatChange) {
+                        if (frame.data.length != 12) continue;
+                        ByteBuffer format = ByteBuffer.wrap(frame.data);
+                        width = format.getInt();
+                        height = format.getInt();
+                        fps = format.getInt();
+                        VideoProtocol.validateVideoSize(width, height);
+                        if (fps < 1 || fps > 120) fps = 60;
+                        videoWidth = width;
+                        videoHeight = height;
+                        videoFps = fps;
+                        if (output != null) {
+                            output.shutdown();
+                            try { output.join(); } catch (InterruptedException ignored) {
+                                Thread.currentThread().interrupt();
+                            }
+                            output = null;
+                        }
+                        if (codec != null) {
+                            try { codec.stop(); } catch (Exception ignored) {}
+                            codec.release();
+                            codec = null;
+                        }
+                        runOnUiThread(() -> { if (screen != null) applySurfaceFrameRate(screen.getHolder()); });
+                        Log.i(TAG, "Video format change " + width + "x" + height + "@" + fps);
+                        continue;
+                    }
                     synchronized (statsLock) {
                         statsReceived++;
                         statsBytes += frame.data.length;
@@ -342,7 +383,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
                 Log.e(TAG, "Video connection", error);
                 videoVisible = false;
                 if (ReconnectPolicy.shouldRetry(running)) {
-                    showStatus("连接中断，正在重试…");
+                    showStatus(getString(R.string.status_retry));
                     long delay = ReconnectPolicy.delayMillis(reconnectAttempts++);
                     try { Thread.sleep(delay); } catch (InterruptedException ignored) {}
                 }
@@ -367,6 +408,18 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         try {
             receiver = new RtpVideoReceiver(serverHost, udpPort, token, new RtpVideoReceiver.Listener() {
                 @Override public void onMetadata(int width, int height, int fps) {
+                    if (output[0] != null) {
+                        output[0].shutdown();
+                        try { output[0].join(); } catch (InterruptedException ignored) {
+                            Thread.currentThread().interrupt();
+                        }
+                        output[0] = null;
+                    }
+                    if (codec[0] != null) {
+                        try { codec[0].stop(); } catch (Exception ignored) {}
+                        codec[0].release();
+                        codec[0] = null;
+                    }
                     videoWidth = width;
                     videoHeight = height;
                     videoFps = fps;

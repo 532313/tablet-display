@@ -12,6 +12,11 @@
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>dev.local.tabletdisplay</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh_CN</string>
+        <string>en</string>
+    </array>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -26,8 +31,6 @@
     <string>public.app-category.utilities</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
-    <key>LSUIElement</key>
-    <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSLocalNetworkUsageDescription</key>

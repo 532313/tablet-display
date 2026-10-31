@@ -7,11 +7,11 @@ final class RTPVideoServer: @unchecked Sendable {
     static let defaultPort: UInt16 = 9138
     private static let maxPayload = 1200
 
-    private let frames: VideoFrameStore
+    private var frames: VideoFrameStore
     private let token: String
-    private let width: Int
-    private let height: Int
-    private let fps: Int
+    private var width: Int
+    private var height: Int
+    private var fps: Int
 
     private let stateLock = NSLock()
     private var socketFD: Int32 = -1
@@ -92,6 +92,20 @@ final class RTPVideoServer: @unchecked Sendable {
         return actualPort
     }
 
+    func updateVideo(frames: VideoFrameStore, width: Int, height: Int, fps: Int) {
+        stateLock.lock()
+        self.frames = frames
+        self.width = width
+        self.height = height
+        self.fps = fps
+        cursor = frames.latestSequence()
+        needsKeyframe = true
+        let peer = self.peer
+        stateLock.unlock()
+        frames.requestKeyframe()
+        if let peer { sendMetadata(to: peer) }
+    }
+
     func stop() {
         stateLock.lock()
         running = false
@@ -160,7 +174,9 @@ final class RTPVideoServer: @unchecked Sendable {
     }
 
     private func sendMetadata(to source: sockaddr_in) {
+        stateLock.lock()
         let text = "META \(width) \(height) \(fps)\n"
+        stateLock.unlock()
         send(Data(text.utf8), to: source)
     }
 
@@ -184,6 +200,7 @@ final class RTPVideoServer: @unchecked Sendable {
             let generation = peerGeneration
             let cursor = self.cursor
             let needsKeyframe = self.needsKeyframe
+            let frames = self.frames
             stateLock.unlock()
 
             guard let peer else {

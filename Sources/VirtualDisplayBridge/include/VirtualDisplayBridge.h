@@ -12,6 +12,8 @@ void *VDCreate(uint32_t pixelWidth, uint32_t pixelHeight,
                uint32_t *displayID);
 bool VDSetNativeMode(uint32_t displayID, uint32_t width, uint32_t height);
 bool VDPlaceRightOfMain(uint32_t displayID);
+bool VDResize(void *handle, uint32_t pixelWidth, uint32_t pixelHeight,
+              uint32_t logicalWidth, uint32_t logicalHeight);
 void VDDestroy(void *handle);
 
 #endif

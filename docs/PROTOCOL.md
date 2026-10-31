@@ -1,10 +1,10 @@
 # 传输协议
 
-默认端口 `9137`（HTTP/1.1）；直连模式另有 UDP-RTP `9138` 和可选 UDP PCM 音频 `9139`。均为明文传输，仅建议在可信局域网使用。
+默认端口 `9137`（HTTP/1.1）；直连模式另有 UDP-RTP `9138`。均为明文传输，仅建议在可信局域网使用。
 
 ## 鉴权
 
-`/video`、`/input`、`/pointer` 需要：
+`/video`、`/input`、`/pointer`、`/orientation` 需要：
 
 ```http
 Authorization: Bearer <token>
@@ -64,36 +64,20 @@ META <width> <height> <fps>
 
 当前 UDP 层没有 FEC/NACK：检测到 RTP 序列号缺口时，平板丢弃损坏帧并请求新 IDR。UDP 握手/首帧超时 2 秒则回退 TCP。token 只做鉴权，不提供加密。
 
-## UDP PCM 音频（可选，直连模式）
+## `POST /orientation`
 
-控制面板开启“平板窗口声音仅平板播放”并重启后，Mac 监听 UDP `9139`。音频由 Core Audio 进程 tap 按窗口所在显示器选择，原输出被静音；协议本身只是 PCM 传输。
+请求体：
 
-平板控制报文：
-
-```text
-HELLO <token>
-
-PING
-
+```json
+{"portrait":true}
 ```
 
-Mac 回：
+Mac 会等待显示/采集切换完成再回复：
 
-```text
-AMETA 48000 2
+- `204 No Content`：切换成功，或当前已经处于目标方向
+- `409 Conflict`：切换失败或另一方向切换正在进行
 
-```
-
-随后每个 UDP 包：
-
-```text
-4 bytes magic "TDAU"
-4 bytes big-endian sequence
-8 bytes big-endian sample timestamp
-N bytes interleaved s16le PCM (48kHz, 2ch)
-```
-
-默认每包 240 帧（5ms，960 字节 PCM），约 200 包/秒、1.5Mbps。没有 FEC/NACK；丢包表现为音频缺口。服务端 5 秒无心跳会停止发送，音频不会影响视频 TCP/UDP 链路。
+Android 收到非 204 会按退避重试，避免“已上报但实际未切换”的静默失败。
 
 ## `GET /input`
 

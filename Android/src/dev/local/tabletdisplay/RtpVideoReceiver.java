@@ -129,6 +129,9 @@ final class RtpVideoReceiver implements Closeable {
             height = newHeight;
             fps = newFps;
             metadata = true;
+            waitingKeyframe = true;
+            expectedSequence = -1;
+            resetFrame();
             listener.onMetadata(width, height, fps);
         } catch (NumberFormatException ignored) {
             // Ignore malformed control packets.

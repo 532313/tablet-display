@@ -56,6 +56,12 @@ public final class ProtocolTest {
         check(frame.keyframe, "关键帧标志应被解析");
         check(Arrays.equals(frame.data, new byte[]{10, 20, 30}), "帧数据应完整读取");
 
+        byte[] format = {2, 0, 0, 0, 12, 0, 0, 4, 0, 0, 0, 3, 0, 0, 0, 0, 60};
+        VideoProtocol.Frame changed = VideoProtocol.readFrame(
+                new DataInputStream(new ByteArrayInputStream(format)));
+        check(changed.formatChange, "分辨率变更标志应被解析");
+        check(!changed.keyframe, "分辨率变更不是关键帧");
+
         byte[] bad = {0, 0, 0, 0, 0};
         expectIOException(() -> VideoProtocol.readFrame(
                         new DataInputStream(new ByteArrayInputStream(bad))),

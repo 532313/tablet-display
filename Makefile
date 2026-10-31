@@ -1,7 +1,7 @@
 SHELL := /bin/zsh
 APP   := build/TabletDisplay.app
 
-.PHONY: all app apk install-tablet icon test test-core test-android signing run wireless dmg release install clean distclean
+.PHONY: all app apk install-tablet icon test test-core test-android test-ui test-device test-device-video test-permission signing run wireless dmg release notarize release-check install clean distclean
 
 all: app
 
@@ -25,6 +25,18 @@ test-core:
 test-android:
 	./scripts/test-android.sh
 
+test-ui:
+	./scripts/test-ui.sh
+
+test-device:
+	./scripts/test-device-smoke.sh
+
+test-device-video:
+	./scripts/test-device-video.sh
+
+test-permission:
+	./scripts/test-permission-failure.sh
+
 signing:
 	./scripts/create-signing-identity.sh
 
@@ -37,7 +49,13 @@ wireless:
 dmg: app
 	./scripts/make-dmg.sh --no-build
 
-release: dmg
+release: dmg release-check
+
+notarize:
+	./scripts/notarize.sh
+
+release-check:
+	./scripts/check-release.sh
 
 install:
 	./scripts/install-app.sh

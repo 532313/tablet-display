@@ -13,7 +13,7 @@ final class StatusBarController: NSObject, @unchecked Sendable {
         self.port = port
         self.controlPanel = controlPanel
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem = NSMenuItem(title: "正在启动…", action: nil, keyEquivalent: "")
+        statusItem = NSMenuItem(title: AppText.t("正在启动…"), action: nil, keyEquivalent: "")
         super.init()
         statusItem.isEnabled = false
         item.button?.title = "Tablet Display"
@@ -23,17 +23,17 @@ final class StatusBarController: NSObject, @unchecked Sendable {
         menu.addItem(statusItem)
         menu.addItem(.separator())
         if controlPanel != nil {
-            let panel = NSMenuItem(title: "打开控制面板", action: #selector(openControlPanel),
+            let panel = NSMenuItem(title: AppText.t("打开控制面板"), action: #selector(openControlPanel),
                                    keyEquivalent: ",")
             panel.target = self
             menu.addItem(panel)
             menu.addItem(.separator())
         }
-        let open = NSMenuItem(title: "打开状态页", action: #selector(openHealth), keyEquivalent: "")
+        let open = NSMenuItem(title: AppText.t("打开状态页"), action: #selector(openHealth), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
 
-        let permissions = NSMenuItem(title: "权限设置", action: nil, keyEquivalent: "")
+        let permissions = NSMenuItem(title: AppText.t("权限设置"), action: nil, keyEquivalent: "")
         let permissionMenu = NSMenu()
         for pane in [PermissionPane.screenRecording, .accessibility, .localNetwork] {
             let entry = NSMenuItem(title: pane.title, action: #selector(openPermission(_:)), keyEquivalent: "")
@@ -44,11 +44,11 @@ final class StatusBarController: NSObject, @unchecked Sendable {
         permissions.submenu = permissionMenu
         menu.addItem(permissions)
 
-        let log = NSMenuItem(title: "打开日志", action: #selector(openLog), keyEquivalent: "")
+        let log = NSMenuItem(title: AppText.t("打开日志"), action: #selector(openLog), keyEquivalent: "")
         log.target = self
         menu.addItem(log)
 
-        let quit = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: AppText.t("退出"), action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
         item.menu = menu

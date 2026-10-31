@@ -12,6 +12,11 @@ rm -rf "$dest"
 ditto "$root/build/TabletDisplay.app" "$dest"
 xattr -dr com.apple.quarantine "$dest" 2>/dev/null || true
 codesign --verify --deep --strict "$dest"
+archs="$(lipo -archs "$dest/Contents/MacOS/TabletDisplay" 2>/dev/null || true)"
+if [[ "$archs" != "arm64" ]]; then
+  print -u2 "安装包架构异常：期望 arm64，实际 '$archs'。"
+  exit 1
+fi
 
 if [[ -d "/Applications/Tablet Display.app" ]]; then
   print -u2 "警告：/Applications 下还有旧副本，Finder 可能启动它而不是新副本，表现为双击没反应；建议移到废纸篓。"

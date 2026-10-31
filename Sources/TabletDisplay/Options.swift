@@ -17,8 +17,6 @@ struct Options {
     var directHost: String?
     var token: String?
     var hidpi: Bool?
-    var audio = false
-    var audioExplicit = false
 
     static func parse(_ args: [String]) throws -> Options {
         var options = Options()
@@ -70,18 +68,12 @@ struct Options {
                 }
             case "--no-adb":
                 options.noADB = true
-            case "--audio":
-                options.audio = true
-                options.audioExplicit = true
-            case "--no-audio":
-                options.audio = false
-                options.audioExplicit = true
             case "--hidpi":
                 options.hidpi = true
             case "--no-hidpi":
                 options.hidpi = false
             case "--help", "-h":
-                print("用法: TabletDisplay [--width 2560 --height 1600] [--fps 60] [--bitrate 20] [--port 9137] [--serial 设备号] [--direct-host Mac局域网IP] [--token 令牌] [--hidpi|--no-hidpi] [--audio|--no-audio] [--no-adb] [--duration 秒]")
+                print("用法: TabletDisplay [--width 2560 --height 1600] [--fps 60] [--bitrate 20] [--port 9137] [--serial 设备号] [--direct-host Mac局域网IP] [--token 令牌] [--hidpi|--no-hidpi] [--no-adb] [--duration 秒]")
                 Foundation.exit(0)
             default:
                 throw CLIError.invalid("未知参数 \(arg)")

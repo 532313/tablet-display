@@ -19,14 +19,40 @@ jobs:
         run: |
           swift --version
           xcodebuild -version
-      - name: Build macOS app
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
         run: |
-          mkdir -p .build/ModuleCache
-          CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache" \
-            swift build --disable-sandbox -c release \
-            -Xswiftc -module-cache-path -Xswiftc "$PWD/.build/ModuleCache"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-34" "build-tools;36.0.0"
+      - name: Build macOS app
+        run: ./scripts/build-app.sh
+      - name: Verify Apple Silicon-only binary
+        run: |
+          test "$(uname -m)" = "arm64"
+          test "$(lipo -archs build/TabletDisplay.app/Contents/MacOS/TabletDisplay)" = "arm64"
       - name: Core, protocol and socket tests
         run: make test-core
+      - name: UI snapshot smoke test
+        run: make test-ui
+      - name: Package DMG
+        run: make dmg
+      - name: Verify release artifacts
+        run: |
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/TabletDisplay.app/Contents/Info.plist)"
+          dmg="dist/Tablet Display-${version}.dmg"
+          test -f "$dmg"
+          hdiutil verify "$dmg"
+          test "$(lipo -archs build/TabletDisplay.app/Contents/MacOS/TabletDisplay)" = "arm64"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TabletDisplay-macos-arm64
+          path: |
+            build/TabletDisplay.app
+            dist/*.dmg
 
   android:
     name: Android build and protocol tests
@@ -53,3 +79,7 @@ jobs:
           make test-android
       - name: Build APK
         run: ./scripts/build-android.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TabletDisplay-android-apk
+          path: build/TabletDisplay.apk

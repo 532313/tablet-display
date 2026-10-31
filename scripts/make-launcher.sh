@@ -37,6 +37,7 @@ if [[ ! -d "$core" ]]; then
   exit 1
 fi
 if /usr/bin/pgrep -f "$core/Contents/MacOS/TabletDisplay" >/dev/null; then
+  /usr/bin/open -a "$core"
   exit 0
 fi
 read_int() {
@@ -53,10 +54,7 @@ width=$(read_int TabletDisplayWidth 1470 640 4096)
 height=$(read_int TabletDisplayHeight 956 480 4096)
 fps=$(read_int TabletDisplayFPS 60 15 60)
 bitrate=$(read_int TabletDisplayBitrateMbps 20 5 50)
-audio=$(/usr/bin/defaults read "$domain" TabletDisplayAudio 2>/dev/null || true)
-audio_args=(--no-audio)
-[[ "$audio" == "1" ]] && audio_args=(--audio)
-exec "$core/Contents/MacOS/TabletDisplay" "${audio_args[@]}" \
+exec /usr/bin/open -n -a "$core" --args \
   --width "$width" --height "$height" --fps "$fps" --bitrate "$bitrate" --no-hidpi
 SH
 chmod +x "$launcher/Contents/MacOS/TabletDisplayLauncher"

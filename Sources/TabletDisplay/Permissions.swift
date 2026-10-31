@@ -7,9 +7,9 @@ enum PermissionPane: Int {
 
     var title: String {
         switch self {
-        case .screenRecording: return "屏幕录制"
-        case .accessibility: return "辅助功能"
-        case .localNetwork: return "本地网络"
+        case .screenRecording: return AppText.t("屏幕录制")
+        case .accessibility: return AppText.t("辅助功能")
+        case .localNetwork: return AppText.t("本地网络")
         }
     }
 

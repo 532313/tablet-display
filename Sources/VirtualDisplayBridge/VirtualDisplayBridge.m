@@ -44,12 +44,13 @@ void *VDCreate(uint32_t pixelWidth, uint32_t pixelHeight,
 
     CGVirtualDisplayDescriptor *descriptor = [CGVirtualDisplayDescriptor new];
     descriptor.name = @"Tablet Display";
-    descriptor.maxPixelsWide = pixelWidth;
-    descriptor.maxPixelsHigh = pixelHeight;
+    descriptor.maxPixelsWide = MAX(pixelWidth, pixelHeight);
+    descriptor.maxPixelsHigh = MAX(pixelWidth, pixelHeight);
     descriptor.sizeInMillimeters = CGSizeMake(270, 170);
     descriptor.vendorID = 0x5442;
     descriptor.productID = 0x4453;
-    descriptor.serialNum = 1;
+    static uint32_t nextSerial = 1;
+    descriptor.serialNum = nextSerial++;
     descriptor.queue = dispatch_get_main_queue();
     descriptor.terminationHandler = ^(id _unused, id display) { (void)display; };
 
@@ -62,9 +63,16 @@ void *VDCreate(uint32_t pixelWidth, uint32_t pixelHeight,
     BOOL hiDPI = (logicalWidth * 2 == pixelWidth && logicalHeight * 2 == pixelHeight);
     CGVirtualDisplaySettings *settings = [CGVirtualDisplaySettings new];
     settings.hiDPI = hiDPI ? 1 : 0;
-    settings.modes = @[[[CGVirtualDisplayMode alloc] initWithWidth:logicalWidth
-                                                             height:logicalHeight
-                                                        refreshRate:60]];
+    NSMutableArray<CGVirtualDisplayMode *> *modes = [NSMutableArray arrayWithObject:
+        [[CGVirtualDisplayMode alloc] initWithWidth:logicalWidth
+                                             height:logicalHeight
+                                        refreshRate:60]];
+    if (logicalWidth != logicalHeight) {
+        [modes addObject:[[CGVirtualDisplayMode alloc] initWithWidth:logicalHeight
+                                                              height:logicalWidth
+                                                         refreshRate:60]];
+    }
+    settings.modes = modes;
     if (![display applySettings:settings]) {
         NSLog(@"CGVirtualDisplay applySettings failed");
         return NULL;
@@ -108,6 +116,21 @@ bool VDPlaceRightOfMain(uint32_t displayID) {
         return false;
     }
     return CGCompleteDisplayConfiguration(config, kCGConfigureForSession) == kCGErrorSuccess;
+}
+
+bool VDResize(void *handle, uint32_t pixelWidth, uint32_t pixelHeight,
+              uint32_t logicalWidth, uint32_t logicalHeight) {
+    if (!handle) return false;
+    CGVirtualDisplay *display = (__bridge CGVirtualDisplay *)handle;
+    if (!display) return false;
+    BOOL hiDPI = (logicalWidth * 2 == pixelWidth && logicalHeight * 2 == pixelHeight);
+    CGVirtualDisplaySettings *settings = [CGVirtualDisplaySettings new];
+    settings.hiDPI = hiDPI ? 1 : 0;
+    settings.modes = @[[[CGVirtualDisplayMode alloc] initWithWidth:logicalWidth
+                                                            height:logicalHeight
+                                                       refreshRate:60]];
+    if (![display applySettings:settings]) return false;
+    return VDSetNativeMode(display.displayID, pixelWidth, pixelHeight);
 }
 
 void VDDestroy(void *handle) {

@@ -16,9 +16,31 @@
 - ADB 恢复：连接失败时自动重启 adb server 并重试，兼容 Android 11+ 无线调试的 mDNS endpoint。
 - 延迟优化：手动重连优先直连；Android 获取 Wi-Fi 低延迟锁；H.264 改为长 GOP，并在新客户端/落后时按需强制关键帧，减少周期突发。
 - UDP-RTP：直连时视频优先走 UDP 9138，H.264 FU-A 分片、RTP 时间戳/标记位、心跳与丢包 IDR 请求；UDP 失败自动回退 TCP。
-- 按屏幕拆分音频：控制面板新增“平板窗口声音仅平板播放”；使用 Core Audio 进程 tap，按窗口中心所在显示器选择进程，平板窗口音频静音并送平板，Mac 窗口音频保持本机；PCM 经 UDP 9139，Android AudioTrack 播放。
-- 重启/重连修复：不再在读取分辨率失败时过早重启 ADB server；重启改用 LaunchServices 并等待旧进程退出；ADB shell 持续未就绪时自动重启 server 并重连；重启丢失命令行参数时回退已保存的分辨率/帧率/音频设置。
-- 竖屏模式：控制面板新增 956×1470、1200×1920、1600×2560、800×1280 竖屏预设；Android 接收端改为 `fullSensor`，支持平板旋转。
+- 控制面板改版：采用 macOS 系统设置式侧边栏与材质窗口，新增概览状态卡、指标卡、竖屏预览、分区设置和原生开关；保留全部连接、显示、权限和启动行为。
+- 单实例：核心 App 使用 `flock`，第二次启动只激活已有控制面板，不再产生重复进程或端口冲突。
+- 二维码配对：Mac 直连模式生成配对二维码，Android 注册 `tabletdisplay://pair` deep link，扫码后自动使用 host/端口/token 重连。
+- 首次体验：概览新增三步欢迎卡，连接页新增 ADB/mDNS 附近设备扫描和权限入口。
+- 可访问性：控制面板卡片、复制按钮、预览增加 VoiceOver 标签/组合。
+- Android 前台服务：常驻通知、Wi-Fi 低延迟锁移入 Service，真机验证 `isForeground=true`。
+- 本地化：Mac 控制面板、应用菜单、Dock/状态栏权限菜单增加英文资源；Android 状态与通知改用 `values/values-en` 资源。
+- 公证流水线：新增 GitHub Actions `Notarized Release`，导入 Developer ID、hardened runtime 签名、notarytool 提交、staple 和 Gatekeeper 校验。
+- 发布工程化：新增 `make release-check` 校验 arm64、签名和 DMG；新增 `make notarize` 入口。
+- 真机视频/触摸/旋转 E2E：新增 `make test-device-video`，以固定 token 启动核心应用，验证平板 Video 日志、解码统计、触摸注入到虚拟屏，以及强制横屏/恢复后的原地方向切换。
+- 权限故障测试：新增 `TABLETDISPLAY_FORCE_SCREEN_RECORDING_DENIED` 注入和 `make test-permission`，验证失败后控制面板保留。
+- 真机 smoke test：新增 `make test-device`，验证 APK 安装、Activity 启动、前台服务和通知。
+- UI 测试：新增 `make test-ui`/`--snapshot-ui` 控制面板快照 smoke test，并接入 CI。
+- 可恢复启动：屏幕录制、采集或端口占用失败时保留控制面板，不再直接退出；用户修复权限/端口后可重新连接。
+- 方向回执：`/orientation` 等待显示/采集切换结果，失败返回 409；Android `OrientationReporter` 自动重试。
+- 网络恢复：后台每 5 秒检查 Mac 路由变化与 mDNS 平板地址，自动用新地址重启连接。
+- macOS 应用菜单：增加关于、打开控制面板、服务、隐藏/显示、退出等标准菜单项。
+- HiDPI：方向切换时保留 pixel/logical 双尺寸，避免 2560×1600 旋转后丢失 2x。
+- 测试：新增 DisplayGeometry 几何测试和方向失败 409 回执测试。
+- 平台范围：明确仅支持 Apple Silicon（arm64）；构建、安装和 CI 都会校验产物架构。
+- Dock 集成：应用改为常规 `Foreground` 应用并保留菜单栏状态项；桌面启动器改用 LaunchServices 启动核心 bundle，Dock 显示 AppIcon，点击图标可重新打开控制面板。
+- 移除平板音频：取消按屏幕拆分/平板播放功能，声音只从 Mac 默认输出；删除 UDP PCM、Core Audio tap 和 Android AudioTrack 链路。
+- 重启/重连修复：不再在读取分辨率失败时过早重启 ADB server；重启改用 LaunchServices 并等待旧进程退出；ADB shell 持续未就绪时自动重启 server 并重连；重启丢失命令行参数时回退已保存的分辨率/帧率设置。
+- 自动横竖屏：Android 在方向变化时通过 `/orientation` 上报，Mac 原地创建匹配方向的虚拟屏并替换采集/编码器；HTTP/UDP 视频用格式变更继续，应用、ADB 和触摸不重启。Android 接收端改为 `fullSensor`。
+- 显示排列：虚拟屏每秒校验，始终保持在主屏右侧，系统重排后自动纠正。
 - 触摸开关：控制面板新增“允许平板触摸”，关闭后 Mac 立即忽略 `/input`，拖动中关闭会补发 `up`；设置持久化。
 
 ## 0.2.0 — 2026-10-18

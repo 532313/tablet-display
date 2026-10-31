@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tablet Display</string>
+    <string name="status_connecting">Connecting to Mac display…</string>
+    <string name="status_retry">Connection lost, retrying…</string>
+    <string name="notification_title">Tablet Display</string>
+    <string name="notification_text">Running as a Mac display</string>
+    <string name="notification_channel">Tablet Display</string>
+</resources>

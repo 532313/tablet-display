@@ -10,7 +10,7 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 
 直连模式优先使用 **UDP-RTP** 传输视频，避免 TCP 队头阻塞；UDP 不可用时自动回退到 TCP `/video`。
 
-当前版本 **0.2.0**，测试设备为华为 WGR-W09（Android 12，2560×1600，60Hz）。
+当前版本 **0.2.0**。**仅支持 Apple Silicon（arm64）Mac**；测试设备为华为 WGR-W09（Android 12，2560×1600，60Hz）。
 
 ## 功能
 
@@ -18,19 +18,26 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 - 60fps：采集/编码/解码/呈现全链路约 58–60fps。
 - 硬件编解码：VideoToolbox H.264 + MediaCodec 硬解。
 - 单点触摸：按视频实际显示区域映射，支持黑边。
-- 横屏锁定、断线重连、采集自动重启。
+- 自动横竖屏、断线重连、采集自动重启。
+- Android 前台服务：常驻通知与 Wi-Fi 锁，避免使用中被系统当作普通后台进程回收。
+- 首次引导与发现：控制面板提供三步欢迎卡、权限入口和 ADB/mDNS 附近设备扫描。
+- 二维码配对：直连模式控制面板生成含 host/port/token 的二维码，平板扫码打开 `tabletdisplay://pair` 自动填参并重连。
 - token 鉴权；TCP 直连额外限制平板 IP，UDP 通过 HELLO 中的 token 鉴权。
-- 菜单栏应用、自定义图标、桌面启动器。
+- 菜单栏 + Dock 应用、标准应用菜单、自定义图标、桌面启动器。
+- 中英文界面：跟随系统语言；控制面板、应用菜单、状态栏权限菜单和 Android 状态/通知均提供英文资源。
 - 启动控制面板：实时状态、分辨率/帧率/码率设置、启动显示/关闭退出开关、保存并重启、权限/日志/状态页/退出。
-- 网络变化恢复：显示本机/平板 IP，支持手动输入平板新 IP 重连；启动时找不到平板不再直接退出。
+- 网络变化恢复：后台每 5 秒检查 Mac 路由和 mDNS 平板地址，IP 变化时自动带新地址重启；也支持手动输入平板新 IP。
+- 可恢复启动：屏幕录制/采集/端口临时失败时保留控制面板，修复权限或释放端口后可重试，不再直接退出。
+- 单实例：核心 App 使用文件锁，第二次启动只会激活已有控制面板，不会争抢端口。
+- 方向切换回执：Android 上报方向后等待 Mac 完成切换；失败返回 409，Android 自动重试。
 - ADB 恢复：连接失败自动重启 adb server，并尝试 `adb mdns services` 发现的无线调试 endpoint。
 - 低延迟：手动重连优先直连；Android 使用 Wi-Fi 低延迟锁；H.264 使用长 GOP + 按需强制关键帧，减少周期性码率突发。
 - UDP-RTP 视频：直连模式优先走 UDP（默认 9138），H.264 FU-A 分片、RTP 时间戳/标记位、心跳；UDP 不可用时自动回退 TCP `/video`；丢包时请求新 IDR。
-- 按屏幕拆分声音：窗口中心在平板虚拟屏的进程会被静音并送到平板，窗口留在 Mac 的进程继续从 Mac 输出；按进程路由，约 0.5–1 秒刷新。
-- 竖屏模式：控制面板提供 956×1470、1200×1920、1600×2560、800×1280 等竖屏分辨率；Android 接收端允许传感器旋转。
+- 自动横竖屏：平板旋转后 Android 上报方向，Mac 原地切换虚拟屏/采集/编码器，HTTP/UDP 视频通过格式变更继续，应用、ADB 和触摸都不重启。
+- 固定排列：虚拟屏始终保持在主屏右侧，后台每秒校验一次，系统重新排列后会自动纠正。
 - 触摸开关：可关闭“允许平板触摸”，立即忽略平板输入；关闭时若正在拖动会自动补发 up，避免 Mac 鼠标卡住。
 - Android 自适应启动图标，与 macOS 图标使用同一套视觉。
-- 版本化 `.app`、DMG 打包、notarize 脚本。
+- 版本化 `.app`、DMG 打包、notarize 脚本；当前**仅构建和验证 arm64**。
 
 
 ## 传输与延迟
@@ -42,7 +49,6 @@ Tablet Display 在 Mac 上创建一块虚拟显示器，用 ScreenCaptureKit 采
 | 直连，UDP 可用 | **UDP-RTP :9138** | 默认路径，避免 TCP 队头阻塞 |
 | 直连，UDP 无法建立 | TCP `/video` :9137 | 自动兜底，功能不中断 |
 | ADB 隧道（`--adb-tunnel`） | TCP `/video` | UDP 不能走 `adb reverse` |
-| 可选音频（直连） | UDP PCM :9139 | 按窗口所在屏幕选中进程，48kHz/stereo/s16le |
 
 UDP 数据面使用：
 
@@ -74,15 +80,15 @@ TCP /video（优化前）:
 
 ## 环境要求
 
-- macOS 13 或更新版本（当前在 macOS 27 / Apple M5 验证）；按窗口拆分音频需要 macOS 14.2+。
+- **Apple Silicon（arm64）Mac**，macOS 13 或更新版本（当前在 macOS 27 / Apple M5 验证）。不支持 Intel Mac。
 - Xcode Command Line Tools。
 - Android SDK：API 34、Build Tools 36.0.0、Platform Tools。
 - JDK：默认使用 Android Studio 的 JBR；如果不是默认安装位置，请设置 `JAVA_HOME`。
 - Android 调试签名 key 默认保存在 `~/Library/Application Support/TabletDisplay/debug.keystore`（不在仓库里），避免清理构建目录时丢失签名身份；可用 `TABLETDISPLAY_DEBUG_KEYSTORE` 覆盖。
 - 可选：`openssl`（`scripts/create-signing-identity.sh` 用于生成本地稳定签名身份；macOS 自带 LibreSSL 通常可用）。
 - 平板开启 USB 调试；无线模式要求 Mac 与平板在同一局域网。
-- UDP-RTP 使用 9138，音频使用 9139，TCP 使用 9137；本地防火墙需允许 Tablet Display 的局域网入站连接。
-- 首次运行需要授予“屏幕与系统音频录制”“辅助功能”“本地网络”；“屏幕与系统音频录制”权限同时用于系统音频 tap。
+- UDP-RTP 使用 9138，TCP 使用 9137；本地防火墙需允许 Tablet Display 的局域网入站连接。
+- 首次运行需要授予“屏幕录制”“辅助功能”“本地网络”。
 
 ## 安装
 
@@ -138,23 +144,26 @@ make wireless
 ### 日常
 
 - 双击 `~/Desktop/Tablet Display 启动器.app`，或从 `~/Applications` 打开 **Tablet Display**。
-- 启动后会显示控制面板：可查看虚拟屏/传输/平板状态，设置分辨率/帧率/码率，切换“平板窗口声音仅平板播放”和“允许平板触摸”，切换启动显示与关闭退出行为，打开权限设置、状态页、日志或退出。
-- 网络变化时：把平板新 IP 填入“平板 IP”并点“重新连接”；留空则重新自动扫描（需要插 USB）。有可用局域网路由时优先直连并启用 UDP-RTP，否则回退到 ADB 隧道 + TCP。
-- 码率和触摸开关即时生效；分辨率、帧率和音频开关保存后点“保存并重启”生效，桌面启动器下次也会沿用保存值。音频路由每 0.5 秒按窗口位置刷新。
-- 默认关闭控制面板后应用仍在菜单栏运行；菜单栏 **Tablet Display → 打开控制面板** 可重新显示。也可在设置中勾选“关闭窗口时退出应用”。
+- 控制面板使用 macOS 系统设置式布局：左侧材质边栏分为概览、显示与交互、连接、通用；右侧用状态卡、信息卡和原生控件展示虚拟屏/传输/平板状态，设置分辨率/帧率/码率、触摸、启动与关闭行为，打开权限设置、状态页、日志或退出。
+- 网络变化时：后台会自动检查 Mac 路由和 mDNS 平板地址，并带新地址重启连接；仍可在“平板 IP”手动输入或留空自动扫描（需要插 USB）。有可用局域网路由时优先直连并启用 UDP-RTP，否则回退到 ADB 隧道 + TCP。
+- 码率和触摸开关即时生效；分辨率和帧率保存后点“保存并重启”生效，桌面启动器下次也会沿用保存值。
+- 启动后 Dock 会显示 Tablet Display 图标；点击 Dock 图标可重新打开控制面板。默认关闭控制面板后应用仍在菜单栏/Dock 运行，也可从菜单栏或应用菜单重新打开。设置中可勾选“关闭窗口时退出应用”。
 - 终端启动：`./scripts/run-wireless.sh`；USB/ADB 隧道：`./scripts/run-wireless.sh --adb-tunnel`。
 
 ### 停止
 
 菜单栏 → **退出**，或终端里 `Ctrl-C`。平板端会显示“连接中断，正在重试…”，按返回/home 退出即可。
 
-### 竖屏模式
+### 自动横竖屏
 
-1. 在控制面板“分辨率”里选择 `竖屏 · ...`（例如 `竖屏 · 匹配 MacBook 956×1470`）。
-2. 把平板旋转为竖屏。
-3. 点“保存并重启”。
+平板旋转后，Android 端会把当前方向上报给 Mac；Mac 检测到虚拟屏方向不一致时，原地创建匹配方向的虚拟显示器并替换采集/编码器。
 
-Android 接收端使用 `fullSensor`，会跟随平板方向；Mac 端会创建对应竖屏尺寸的虚拟显示器。横屏/竖屏切换不会实时改变，必须重启。
+例如基准分辨率是 `1470×956`：
+
+- 平板横屏：`1470×956`
+- 平板竖屏：`956×1470`
+
+视频通过 TCP/UDP 格式变更包继续，Mac 应用、ADB 和触摸连接都不重启。虚拟屏会保持主屏右侧，系统重排后自动纠正。控制面板里的分辨率预设作为**尺寸基准**，不再需要选择横屏/竖屏条目。
 
 ### 分辨率与 UI 大小
 
@@ -167,7 +176,7 @@ Android 接收端使用 `fullSensor`，会跟随平板方向；Mac 端会创建�
 
 建议先执行 `make signing` 创建稳定签名，让 TCC 绑定到稳定的代码身份；否则 ad-hoc 签名在每次重建后都可能变化，系统会要求重新授权。
 
-- **屏幕录制**：主“屏幕与系统音频录制”列表里添加并勾选 `~/Applications/Tablet Display.app`（核心应用）。
+- **屏幕录制**：在主“屏幕录制”列表里添加并勾选 `~/Applications/Tablet Display.app`（核心应用）。
 - **辅助功能**：同样添加核心应用；如果开关是开的但仍每次弹窗，删除旧条目再重新添加。
 - **本地网络**：首次连接时允许。
 - 菜单栏 → **权限设置** 可直接打开“屏幕录制/辅助功能/本地网络”对应页面；缺少权限时应用也会弹出带“打开系统设置”按钮的提示。
@@ -182,21 +191,19 @@ Android 接收端使用 `fullSensor`，会跟随平板方向；Mac 端会创建�
 ./scripts/run.sh --serial 设备序列号
 ./scripts/run.sh --token 固定令牌
 ./scripts/run.sh --hidpi / --no-hidpi
-./scripts/run.sh --audio
 ./scripts/run.sh --no-adb --duration 10
 ./scripts/run-wireless.sh --adb-tunnel
 ```
 
 | 参数 | 说明 |
 | --- | --- |
-| `--width` / `--height` | 像素分辨率，默认平板硬件分辨率；竖屏可用 956×1470 / 1200×1920 / 1600×2560 |
+| `--width` / `--height` | 像素分辨率基准，默认平板硬件分辨率；实际会随平板方向自动交换宽高 |
 | `--fps` | 15–60，默认 60 |
 | `--bitrate` | 5–50 Mbps，默认 20 |
 | `--serial` | 多设备时指定平板 |
 | `--direct-host` | 局域网直连的 Mac IP（脚本自动传入） |
 | `--token` | 固定鉴权 token |
 | `--hidpi` / `--no-hidpi` | 强制/禁用 2x 逻辑尺寸（当前虚拟屏驱动不提供 2x 模式） |
-| `--audio` / `--no-audio` | 开启/关闭按窗口所在屏幕拆分音频；需直连、macOS 14.2+，重启生效 |
 | `--adb-tunnel` | 改用 `adb reverse`，视频走 ADB |
 | `--duration` | 运行指定秒数后退出（调试） |
 
@@ -207,6 +214,10 @@ make app            # 构建 Mac app + APK
 make apk            # 只构建平板接收端 APK
 make install-tablet # 把 APK 直接装到已连接的平板
 make test           # 核心 + Android 协议 + socket 集成测试
+make test-ui        # 控制面板中文/英文 UI 快照 smoke test（需先 make app）
+make test-device    # 真机安装/启动/前台服务/通知 smoke test（需 USB/Wi-Fi ADB）
+make test-device-video # 真机视频/触摸/旋转 E2E（固定 token，会重启核心应用）
+make test-permission # 注入屏幕录制失败，验证控制面板保留（需先退出正在运行的 App）
 make test-core      # 只跑 macOS 核心/协议集成测试
 make test-android   # 只跑 Android 纯 Java 协议测试
 make signing        # 创建稳定本地代码签名身份
@@ -245,7 +256,7 @@ make clean          # 删除编译缓存和构建产物
 `make test` 会依次运行两组测试，不需要连接平板：
 
 - `make test-core`：编译 macOS 核心代码，覆盖尺寸解析、帧队列、采集代次、路由选卡、严格参数校验、mDNS 地址解析和 RTP NAL 拆分，并通过本机 socket 验证 `/video` 帧格式与鉴权、`/input` 解析、触摸开关释放、断连自动释放鼠标、长连接超时隔离、重连和请求超时。
-- `make test-android`：纯 Java 测试 `VideoProtocol` 的 HTTP 头/帧/NAL 解析、`ReconnectPolicy` 的退避策略。UDP-RTP/音频接收端由 `make apk` / `make app` 编译，实际解码、触摸和 AudioTrack 仍需真机验证。
+- `make test-android`：纯 Java 测试 `VideoProtocol` 的 HTTP 头/帧/NAL 解析、`ReconnectPolicy` 的退避策略。UDP-RTP 接收端由 `make apk` / `make app` 编译，实际解码和触摸仍需真机验证。
 
 CI 定义在 [.github/workflows/ci.yml](.github/workflows/ci.yml)：macOS job 构建 Swift 应用并跑 `make test-core`；Ubuntu job 安装 Android SDK 后跑 `make test-android` 并构建 APK。CI 不启动模拟器，MediaCodec 实际解码和触摸注入仍需在真机上验证。
 
@@ -253,6 +264,9 @@ CI 定义在 [.github/workflows/ci.yml](.github/workflows/ci.yml)：macOS job �
 
 ```sh
 make release    # 构建 app + dist/Tablet Display-0.2.0.dmg
+make release-check # 校验 arm64/签名/DMG（本地签名会提示 Gatekeeper 未通过）
+make notarize   # Developer ID 签名 + notarytool 公证（需凭据）
+# GitHub Actions: Actions → Notarized Release → 输入 notarize
 ```
 
 正式签名/公证：
@@ -276,16 +290,13 @@ macOS Developer ID 证书和 notarytool 凭据由开发者自己的 Apple 开发
 
 ## 安全
 
-- 视频/触摸/音频是明文 HTTP、UDP-RTP 或 UDP PCM，token 只做鉴权、不提供加密，只建议在可信局域网使用。
+- 视频/触摸是明文 HTTP 或 UDP-RTP，token 只做鉴权、不提供加密，只建议在可信局域网使用。
 - `adb tcpip 5555` 会让调试端口保持开启；不用时可执行 `adb usb`。
 - token 通过 ADB intent 传递，本机 `adb`/`dumpsys` 可见，不是强隔离凭据。
 
 ## 限制
 
 - 依赖 macOS 私有 `CGVirtualDisplay`，系统更新可能失效。
-- 音频按进程而不是单个窗口路由：同一应用只要有一个窗口在平板上，它的所有声音都会去平板；窗口在 Mac 上时不会送到平板。
-- 没有窗口的音频（例如纯后台播放器）默认留在 Mac；受 DRM 保护的音频可能无法采集。
-- 音频仅支持直连模式，走未压缩 PCM（48kHz/stereo/s16le，约 1.5Mbps）；不支持音量独立控制/多声道/音频回传。
 - 不支持键盘、多点触控、滚轮/右键、剪贴板。
 - 单平板；无自适应码率、无 HDR/色彩管理。
 - UDP-RTP v1 没有 FEC/NACK；检测到丢包/乱序会丢弃损坏帧并请求新 IDR。

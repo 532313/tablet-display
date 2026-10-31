@@ -1,0 +1,111 @@
+/* Tablet Display control panel — English */
+"扩展屏控制" = "Display control";
+"端口" = "Port";
+"概览" = "Overview";
+"显示与交互" = "Display & Input";
+"连接" = "Connection";
+"通用" = "General";
+"平板扩展屏的实时状态" = "Live status of your tablet display";
+"画面、方向与输入设置" = "Display, orientation and input";
+"网络地址与设备连接" = "Network and device connection";
+"启动行为、权限与关于" = "Startup, permissions and about";
+
+"正在启动" = "Starting";
+"运行中" = "Running";
+"需要注意" = "Attention";
+"出现错误" = "Error";
+"已停止" = "Stopped";
+"正在启动…" = "Starting…";
+"重新连接" = "Reconnect";
+"状态页" = "Status page";
+"查看日志" = "View log";
+"保存并重启" = "Save & Restart";
+"重新启动" = "Restart";
+"当前画面" = "Current display";
+"虚拟显示器" = "Virtual display";
+"传输" = "Transport";
+"平板" = "Tablet";
+"视频服务" = "Video service";
+"连接概览" = "Connection overview";
+
+"本机" = "This Mac";
+"局域网 IP" = "LAN IP";
+"当前传输" = "Current transport";
+"平板 IP" = "Tablet IP";
+"自动扫描并重连" = "Scan & reconnect";
+"附近设备" = "Nearby devices";
+"通过 ADB/mDNS 发现已开启无线调试的平板" = "Find tablets with wireless debugging via ADB/mDNS";
+"未发现设备" = "No devices found";
+"正在扫描…" = "Scanning…";
+"扫描" = "Scan";
+"连接" = "Connect";
+"重新连接" = "Reconnect";
+"留空会自动扫描（需 USB）；填写新 IP 优先直连，无可用路由时走 ADB 隧道。" = "Leave empty to scan automatically (USB required). A new IP prefers direct mode, then falls back to the ADB tunnel.";
+"平板地址格式无效，请输入 IPv4 或 IP:端口" = "Invalid tablet address. Enter an IPv4 address or IP:port.";
+
+"画面" = "Display";
+"分辨率" = "Resolution";
+"帧率" = "Frame rate";
+"码率" = "Bitrate";
+"重启生效" = "Restart required";
+"立即生效" = "Instant";
+"交互与行为" = "Input & behavior";
+"允许平板触摸" = "Allow tablet touch";
+"关闭后 Mac 会忽略平板触摸，正在拖动时会自动释放。" = "When off, the Mac ignores tablet touch and releases an active drag.";
+"启动时显示此窗口" = "Show this window at launch";
+"关闭窗口时退出应用" = "Quit when the window closes";
+"分辨率/帧率保存后需重启；码率和触摸开关立即生效。分辨率作为方向切换的尺寸基准。" = "Resolution and frame rate restart the app. Bitrate and touch apply instantly. Resolution is the size baseline for rotation.";
+
+"权限" = "Permissions";
+"屏幕录制" = "Screen Recording";
+"辅助功能" = "Accessibility";
+"本地网络" = "Local Network";
+"打开权限设置" = "Open permission settings";
+"首次使用需要授予相应权限；修改后可能需要重新启动应用。" = "Grant these permissions first. You may need to restart the app after changing them.";
+
+"启动与关闭" = "Startup & quit";
+"支持" = "Support";
+"打开状态页" = "Open status page";
+"打开日志" = "Open log";
+"项目主页" = "Project page";
+"退出应用" = "Quit";
+"Tablet Display 仅建议在可信局域网使用。" = "Use Tablet Display only on a trusted local network.";
+"把平板变成 Mac 的无线扩展屏" = "Turn your tablet into a wireless Mac display";
+"版本" = "Version";
+
+"欢迎使用 Tablet Display" = "Welcome to Tablet Display";
+"三步把平板变成 Mac 的第二块屏幕" = "Three steps to a second Mac display";
+"USB 连接并开启调试" = "USB + debugging";
+"切换到无线 ADB" = "Wireless ADB";
+"允许屏幕录制与辅助功能" = "Allow permissions";
+"不再显示" = "Don't show again";
+"首次连接后可在“连接”页扫描附近设备。" = "After pairing, scan for nearby devices on the Connection page.";
+
+"横屏 · 匹配 MacBook 1470×956" = "Landscape · MacBook 1470×956";
+"横屏 · 1920×1200" = "Landscape · 1920×1200";
+"横屏 · 平板原生 2560×1600" = "Landscape · Native 2560×1600";
+"横屏 · 1280×800" = "Landscape · 1280×800";
+"竖屏 · 匹配 MacBook 956×1470" = "Portrait · MacBook 956×1470";
+"竖屏 · 1200×1920" = "Portrait · 1200×1920";
+"竖屏 · 平板原生 1600×2560" = "Portrait · Native 1600×2560";
+"竖屏 · 800×1280" = "Portrait · 800×1280";
+
+"二维码配对" = "QR pairing";
+"直连模式下生成配对二维码" = "QR pairing is available in direct mode";
+"用平板相机扫描二维码即可连接" = "Scan with your tablet camera to connect";
+"用平板相机或扫码器扫描后，Tablet Display 会自动填入 host、端口和 token。" = "Scan with your tablet camera or a QR scanner. Tablet Display fills in host, port and token automatically.";
+"二维码只在局域网直连模式可用；ADB 隧道模式请使用 USB 或 ADB 连接。" = "QR pairing is available only in direct LAN mode. Use USB or ADB for tunnel mode.";
+"平板配对二维码" = "Tablet pairing QR code";
+
+"关于 Tablet Display" = "About Tablet Display";
+"打开控制面板" = "Open Control Panel";
+"服务" = "Services";
+"隐藏 Tablet Display" = "Hide Tablet Display";
+"隐藏其他" = "Hide Others";
+"全部显示" = "Show All";
+"退出 Tablet Display" = "Quit Tablet Display";
+"正在启动…" = "Starting…";
+"打开状态页" = "Open Status Page";
+"权限设置" = "Permissions";
+"打开日志" = "Open Log";
+"退出" = "Quit";

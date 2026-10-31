@@ -107,7 +107,33 @@ struct CaptureGeneration {
     }
 }
 
-final class H264Encoder: @unchecked Sendable {
+protocol FrameEncoding: AnyObject {
+    func encode(_ image: CVImageBuffer, timestamp: CMTime)
+    func stop()
+}
+
+/// Test-only entry point for simulating a capture startup failure. Production
+/// never sets an error here.
+enum CaptureFaultInjection {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var nextError: Error?
+
+    static func inject(_ error: Error) {
+        lock.lock()
+        nextError = error
+        lock.unlock()
+    }
+
+    static func take() -> Error? {
+        lock.lock()
+        defer { lock.unlock() }
+        let value = nextError
+        nextError = nil
+        return value
+    }
+}
+
+final class H264Encoder: @unchecked Sendable, FrameEncoding {
     private var session: VTCompressionSession?
     private let frames: VideoFrameStore
     private let sessionLock = NSLock()
@@ -301,7 +327,7 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         let fps: Int
     }
 
-    private let encoder: H264Encoder
+    private let encoder: any FrameEncoding
     private let queue = DispatchQueue(label: "tablet-display.capture", qos: .userInitiated)
     private let imageLock = NSLock()
     private var latestImage: CVImageBuffer?
@@ -312,7 +338,7 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private var generation = CaptureGeneration()
     private var restartingGeneration: UInt64?
 
-    init(encoder: H264Encoder) { self.encoder = encoder }
+    init(encoder: any FrameEncoding) { self.encoder = encoder }
 
     private func withState<T>(_ body: () -> T) -> T {
         stateLock.lock()
@@ -327,6 +353,9 @@ final class DisplayCapture: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     }
 
     func start(displayID: CGDirectDisplayID, width: Int, height: Int, fps: Int) async throws {
+        if let injected = CaptureFaultInjection.take() {
+            throw injected
+        }
         let captureGeneration = withState { () -> UInt64 in
             config = Config(displayID: displayID, width: width, height: height, fps: fps)
             restartingGeneration = nil

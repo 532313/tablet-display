@@ -18,18 +18,53 @@ struct PointerMessage: Decodable {
     let phase: String
 }
 
+struct OrientationMessage: Decodable {
+    let portrait: Bool
+}
+
 final class HTTPServer: @unchecked Sendable {
     typealias PointerHandler = (PointerMessage) -> Void
+    typealias OrientationHandler = @Sendable (Bool, @escaping @Sendable (Bool) -> Void) -> Void
 
-    private let frames: VideoFrameStore
-    private let displayID: CGDirectDisplayID
-    private let width: Int
-    private let height: Int
-    private let fps: Int
+    private final class OrientationResult: @unchecked Sendable {
+        private let lock = NSLock()
+        private var applied = false
+        private var completed = false
+
+        func complete(_ value: Bool) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !completed else { return false }
+            completed = true
+            applied = value
+            return true
+        }
+
+        var value: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return applied
+        }
+    }
+
+    private struct VideoState {
+        let frames: VideoFrameStore
+        let width: Int
+        let height: Int
+        let fps: Int
+        let generation: UInt64
+    }
+
+    private var displayID: CGDirectDisplayID
+    private let displayLock = NSLock()
     private let token: String
+    private let videoLock = NSLock()
+    private var videoState: VideoState
+    private var nextVideoGeneration: UInt64 = 0
     private let directPeer: in_addr?
     private let requestTimeout: TimeInterval
     private let pointerHandler: PointerHandler?
+    var orientationHandler: OrientationHandler?
     private var listener: Int32 = -1
     private var clients: Set<Int32> = []
     private let stateLock = NSLock()
@@ -43,15 +78,15 @@ final class HTTPServer: @unchecked Sendable {
 
     init(frames: VideoFrameStore, displayID: CGDirectDisplayID, width: Int, height: Int, fps: Int,
          token: String, directPeerIP: String? = nil, requestTimeout: TimeInterval = 10,
-         pointerHandler: PointerHandler? = nil) {
-        self.frames = frames
+         pointerHandler: PointerHandler? = nil,
+         orientationHandler: OrientationHandler? = nil) {
         self.displayID = displayID
-        self.width = width
-        self.height = height
-        self.fps = fps
         self.token = token
+        self.videoState = VideoState(frames: frames, width: width, height: height,
+                                     fps: fps, generation: 0)
         self.requestTimeout = requestTimeout
         self.pointerHandler = pointerHandler
+        self.orientationHandler = orientationHandler
         if let directPeerIP {
             var address = in_addr()
             self.directPeer = directPeerIP.withCString {
@@ -60,6 +95,32 @@ final class HTTPServer: @unchecked Sendable {
         } else {
             self.directPeer = nil
         }
+    }
+
+    func updateDisplayID(_ displayID: CGDirectDisplayID) {
+        displayLock.lock()
+        self.displayID = displayID
+        displayLock.unlock()
+    }
+
+    private func currentDisplayID() -> CGDirectDisplayID {
+        displayLock.lock()
+        defer { displayLock.unlock() }
+        return displayID
+    }
+
+    func updateVideo(frames: VideoFrameStore, width: Int, height: Int, fps: Int) {
+        videoLock.lock()
+        nextVideoGeneration &+= 1
+        videoState = VideoState(frames: frames, width: width, height: height,
+                                fps: fps, generation: nextVideoGeneration)
+        videoLock.unlock()
+    }
+
+    private func videoSnapshot() -> VideoState {
+        videoLock.lock()
+        defer { videoLock.unlock() }
+        return videoState
     }
 
     func setTouchEnabled(_ enabled: Bool) {
@@ -192,7 +253,7 @@ final class HTTPServer: @unchecked Sendable {
         let method = String(parts[0])
         let path = String(parts[1].split(separator: "?", maxSplits: 1).first ?? "")
 
-        if ["/video", "/input", "/pointer"].contains(path), !isAuthorized(request.header) {
+        if ["/video", "/input", "/pointer", "/orientation"].contains(path), !isAuthorized(request.header) {
             _ = sendResponse(fd, status: "401 Unauthorized", type: "text/plain", body: Data("unauthorized".utf8))
             return
         }
@@ -202,12 +263,37 @@ final class HTTPServer: @unchecked Sendable {
             let message = "Tablet Display 正在运行。请在平板使用 Tablet Display 应用。"
             _ = sendResponse(fd, status: "200 OK", type: "text/plain; charset=utf-8", body: Data(message.utf8))
         case ("GET", "/health"):
-            let text = frames.hasFrames() ? "ready" : "waiting-for-frame"
+            let text = videoSnapshot().frames.hasFrames() ? "ready" : "waiting-for-frame"
             _ = sendResponse(fd, status: "200 OK", type: "text/plain", body: Data(text.utf8))
         case ("GET", "/video"):
             streamVideo(fd)
         case ("GET", "/input"):
             streamInput(fd)
+        case ("POST", "/orientation"):
+            guard request.header.lowercased().contains("content-type: application/json"),
+                  let orientation = try? JSONDecoder().decode(OrientationMessage.self, from: request.body) else {
+                _ = sendResponse(fd, status: "400 Bad Request", type: "text/plain", body: Data("invalid orientation".utf8))
+                return
+            }
+            guard let handler = orientationHandler else {
+                _ = sendResponse(fd, status: "204 No Content", type: "text/plain", body: Data())
+                return
+            }
+            let result = OrientationResult()
+            let semaphore = DispatchSemaphore(value: 0)
+            handler(orientation.portrait) { applied in
+                if result.complete(applied) { semaphore.signal() }
+            }
+            // Capture startup can take a second or two. Keep the tablet's
+            // reporter waiting so it can distinguish success from a silent
+            // failure and retry instead of assuming 204 means applied.
+            let wait = semaphore.wait(timeout: .now() + 6)
+            if wait == .success, result.value {
+                _ = sendResponse(fd, status: "204 No Content", type: "text/plain", body: Data())
+            } else {
+                _ = sendResponse(fd, status: "409 Conflict", type: "text/plain",
+                                 body: Data("orientation switch failed".utf8))
+            }
         case ("POST", "/pointer"):
             guard request.header.lowercased().contains("content-type: application/json"),
                   let event = try? JSONDecoder().decode(PointerMessage.self, from: request.body),
@@ -293,36 +379,63 @@ final class HTTPServer: @unchecked Sendable {
     private func streamVideo(_ fd: Int32) {
         let header = "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
         guard sendAll(fd, Data(header.utf8)) else { return }
-        var widthBE = UInt32(width).bigEndian
-        var heightBE = UInt32(height).bigEndian
-        var fpsBE = UInt32(fps).bigEndian
-        guard withUnsafeBytes(of: &widthBE, { sendAll(fd, Data($0)) }),
-              withUnsafeBytes(of: &heightBE, { sendAll(fd, Data($0)) }),
-              withUnsafeBytes(of: &fpsBE, { sendAll(fd, Data($0)) }) else { return }
+        let initial = videoSnapshot()
+        guard sendDimensions(fd, width: initial.width, height: initial.height, fps: initial.fps) else { return }
 
         var cursor: UInt64 = 0
         var needsKeyframe = true
-        if let first = frames.latestKeyframe() {
+        var generation = initial.generation
+        if let first = initial.frames.latestKeyframe() {
             guard sendVideoFrame(fd, first) else { return }
             cursor = first.sequence
             needsKeyframe = false
         } else {
-            cursor = frames.latestSequence()
-            frames.requestKeyframe()
+            cursor = initial.frames.latestSequence()
+            initial.frames.requestKeyframe()
         }
         while running() {
-            if let frame = frames.next(after: cursor, keyframeOnly: needsKeyframe,
-                                      timeout: needsKeyframe ? 0.1 : 0.5) {
+            let current = videoSnapshot()
+            if current.generation != generation {
+                // Keep the TCP connection and tell the tablet to rebuild its
+                // decoder instead of reconnecting.
+                guard sendVideoFormatChange(fd, state: current) else { return }
+                generation = current.generation
+                cursor = current.frames.latestSequence()
+                needsKeyframe = true
+                current.frames.requestKeyframe()
+                continue
+            }
+            if let frame = current.frames.next(after: cursor, keyframeOnly: needsKeyframe,
+                                              timeout: needsKeyframe ? 0.1 : 0.5) {
                 guard sendVideoFrame(fd, frame) else { return }
                 cursor = frame.sequence
                 needsKeyframe = false
             } else {
-                // The store has no usable IDR (client just connected or
-                // lagged past the GOP). Ask VideoToolbox for one immediately;
-                // the store deduplicates requests until it arrives.
-                frames.requestKeyframe()
+                current.frames.requestKeyframe()
             }
         }
+    }
+
+    private func sendDimensions(_ fd: Int32, width: Int, height: Int, fps: Int) -> Bool {
+        var widthBE = UInt32(width).bigEndian
+        var heightBE = UInt32(height).bigEndian
+        var fpsBE = UInt32(fps).bigEndian
+        return withUnsafeBytes(of: &widthBE, { sendAll(fd, Data($0)) }) &&
+            withUnsafeBytes(of: &heightBE, { sendAll(fd, Data($0)) }) &&
+            withUnsafeBytes(of: &fpsBE, { sendAll(fd, Data($0)) })
+    }
+
+    private func sendVideoFormatChange(_ fd: Int32, state: VideoState) -> Bool {
+        var lengthBE = UInt32(12).bigEndian
+        var packet = Data([2])
+        withUnsafeBytes(of: &lengthBE) { packet.append(contentsOf: $0) }
+        var widthBE = UInt32(state.width).bigEndian
+        var heightBE = UInt32(state.height).bigEndian
+        var fpsBE = UInt32(state.fps).bigEndian
+        withUnsafeBytes(of: &widthBE) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &heightBE) { packet.append(contentsOf: $0) }
+        withUnsafeBytes(of: &fpsBE) { packet.append(contentsOf: $0) }
+        return sendAll(fd, packet)
     }
 
     private func sendVideoFrame(_ fd: Int32, _ frame: EncodedFrame) -> Bool {
@@ -427,7 +540,7 @@ final class HTTPServer: @unchecked Sendable {
             pointerHandler(event)
             return
         }
-        let bounds = CGDisplayBounds(displayID)
+        let bounds = CGDisplayBounds(currentDisplayID())
         let point = CGPoint(x: bounds.minX + event.x * bounds.width,
                             y: bounds.minY + event.y * bounds.height)
         let type: CGEventType

@@ -305,14 +305,11 @@ struct ADB {
     }
 
     func openReceiver(host: String, port: UInt16, token: String,
-                      udpPort: UInt16 = 0, audioPort: UInt16 = 0) throws {
+                      udpPort: UInt16 = 0) throws {
         var arguments = ["shell", "am", "start", "-S", "-n", "dev.local.tabletdisplay/.MainActivity",
                          "--es", "host", host, "--ei", "port", String(port), "--es", "token", token]
         if udpPort > 0 {
             arguments += ["--ei", "udpPort", String(udpPort)]
-        }
-        if audioPort > 0 {
-            arguments += ["--ei", "audioPort", String(audioPort)]
         }
         _ = try command(arguments)
     }

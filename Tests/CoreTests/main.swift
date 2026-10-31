@@ -120,5 +120,41 @@ check(nals.count == 3, "应拆分出 SPS/PPS/IDR 三个 NAL")
 check(nals[0].first == 0x67 && nals[1].first == 0x68 && nals[2].first == 0x65,
       "应同时支持 4 字节和 3 字节 Annex-B 起始码")
 
+
+let hiDPI = DisplayGeometry(pixelWidth: 2560, pixelHeight: 1600, useHiDPI: true)
+check(hiDPI.isHiDPI && hiDPI.logicalWidth == 1280 && hiDPI.logicalHeight == 800,
+      "HiDPI 初始逻辑尺寸应为像素的一半")
+let hiDPIPortrait = hiDPI.oriented(portrait: true)
+check(hiDPIPortrait.pixelWidth == 1600 && hiDPIPortrait.pixelHeight == 2560,
+      "HiDPI 竖屏应交换像素尺寸")
+check(hiDPIPortrait.logicalWidth == 800 && hiDPIPortrait.logicalHeight == 1280,
+      "HiDPI 竖屏应保留 2x 逻辑尺寸")
+let nonHiDPI = DisplayGeometry(pixelWidth: 1470, pixelHeight: 956, useHiDPI: false)
+check(nonHiDPI.oriented(portrait: true).pixelWidth == 956 &&
+      nonHiDPI.oriented(portrait: true).logicalWidth == 956,
+      "非 HiDPI 方向切换应保持逻辑等于像素")
+check(hiDPI.oriented(portrait: true).oriented(portrait: false) == hiDPI,
+      "横竖屏往返应恢复原始几何")
+
+
+check(StartupFailurePolicy.isRecoverable(CLIError.screenRecording), "屏幕录制权限错误应可恢复")
+check(StartupFailurePolicy.isRecoverable(CLIError.virtualDisplay), "虚拟屏创建错误应可恢复")
+check(StartupFailurePolicy.isRecoverable(CaptureError.encoder(-1)), "编码器错误应可恢复")
+check(StartupFailurePolicy.isRecoverable(ServerError.listenFailed(48)), "端口占用应可恢复")
+check(!StartupFailurePolicy.isRecoverable(CLIError.invalid("bad")), "非法 CLI 参数不应保留后台实例")
+check(!StartupFailurePolicy.isRecoverable(NSError(domain: "test", code: 1)), "未知错误不应伪装成可恢复")
+
+
+let pairing = PairingQRCode.url(host: "192.168.1.54", port: 9137,
+                                token: "abc", udpPort: 9138)
+check(pairing?.scheme == "tabletdisplay" && pairing?.host == "pair",
+      "配对 URL 应使用 tabletdisplay://pair")
+check(pairing?.query?.contains("host=192.168.1.54") == true &&
+      pairing?.query?.contains("token=abc") == true &&
+      pairing?.query?.contains("udpPort=9138") == true,
+      "配对 URL 应携带 host/token/UDP 端口")
+check(pairing.flatMap { PairingQRCode.image(for: $0.absoluteString) } != nil,
+      "配对 URL 应能生成二维码图片")
+
 runIntegrationTests()
 print("核心测试通过：尺寸解析、帧队列恢复、采集代次竞态、路由与子网选卡、严格参数解析、mDNS 地址解析、RTP NAL 拆分")

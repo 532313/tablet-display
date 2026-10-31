@@ -17,9 +17,6 @@ let package = Package(
             path: "Sources/TabletDisplay",
             linkerSettings: [
                 .linkedFramework("ApplicationServices"),
-                .linkedFramework("AVFoundation"),
-                .linkedFramework("AudioToolbox"),
-                .linkedFramework("CoreAudio"),
                 .linkedFramework("CoreImage"),
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("SwiftUI"),

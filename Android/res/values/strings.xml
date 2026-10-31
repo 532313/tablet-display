@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tablet Display</string>
+    <string name="status_connecting">正在连接 Mac 扩展屏…</string>
+    <string name="status_retry">连接中断，正在重试…</string>
+    <string name="notification_title">Tablet Display</string>
+    <string name="notification_text">正在作为 Mac 扩展屏运行</string>
+    <string name="notification_channel">Tablet Display</string>
+</resources>

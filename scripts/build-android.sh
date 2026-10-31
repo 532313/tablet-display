@@ -14,15 +14,16 @@ if [[ ! -x "$tools/aapt2" || ! -f "$androidJar" ]]; then
   exit 1
 fi
 
-mkdir -p build/android/classes build/android/dex
-javac -source 8 -target 8 -Xlint:-options -classpath "$androidJar" -d build/android/classes \
-  Android/src/dev/local/tabletdisplay/*.java
-classes=(build/android/classes/**/*.class(N))
-"$tools/d8" --min-api 29 --lib "$androidJar" --output build/android/dex "$classes[@]"
+mkdir -p build/android/classes build/android/dex build/android/gen
 "$tools/aapt2" compile --dir Android/res -o build/android/res.zip
+# Generate R.java before javac so Java code can use resource strings.
 "$tools/aapt2" link -o build/android/unsigned.apk -I "$androidJar" \
   --manifest Android/AndroidManifest.xml -R build/android/res.zip \
-  --min-sdk-version 29 --target-sdk-version 31
+  --java build/android/gen --auto-add-overlay --min-sdk-version 29 --target-sdk-version 31
+javac -source 8 -target 8 -Xlint:-options -classpath "$androidJar" -d build/android/classes \
+  Android/src/dev/local/tabletdisplay/*.java $(find build/android/gen -name '*.java')
+classes=(build/android/classes/**/*.class(N))
+"$tools/d8" --min-api 29 --lib "$androidJar" --output build/android/dex "$classes[@]"
 zip -q -j build/android/unsigned.apk build/android/dex/classes.dex
 "$tools/zipalign" -f 4 build/android/unsigned.apk build/android/aligned.apk
 
